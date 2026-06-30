@@ -109,6 +109,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -116,9 +118,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import com.moutrancorp.memspike.data.AssetEntity
 import com.moutrancorp.memspike.data.CollectionSummary
 import com.moutrancorp.memspike.data.ExtractedSourceData
 import com.moutrancorp.memspike.data.IngestionJobEntity
@@ -387,9 +392,16 @@ private class MemAppState(
 
     private fun applyMemoryState(state: MemoryState) {
         val sourceById = state.sources.associateBy { it.id }
+        val thumbnailBySource = state.assets
+            .filter { it.role == "thumbnail" }
+            .associateBy { it.sourceId }
         memories.clear()
         memories.addAll(
-            if (state.sources.isEmpty()) sampleMemories() else state.sources.map { it.toMemoryUi() },
+            if (state.sources.isEmpty()) {
+                sampleMemories()
+            } else {
+                state.sources.map { it.toMemoryUi(thumbnailBySource[it.id]) }
+            },
         )
         jobs.clear()
         jobs.addAll(
@@ -546,6 +558,7 @@ private data class MemoryUi(
     val summary: String,
     val time: String,
     val icon: ImageVector,
+    val thumbnailUrl: String?,
     val tags: List<String>,
 )
 
@@ -557,7 +570,7 @@ private data class CollectionUi(
     val updatedAt: Long,
 )
 
-private fun SourceEntity.toMemoryUi(): MemoryUi {
+private fun SourceEntity.toMemoryUi(thumbnailAsset: AssetEntity?): MemoryUi {
     val typeLabel = sourceType.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
     return MemoryUi(
         id = id,
@@ -573,6 +586,7 @@ private fun SourceEntity.toMemoryUi(): MemoryUi {
             },
         time = savedAt.relativeTime(),
         icon = sourceIcon(sourceType, processingState),
+        thumbnailUrl = thumbnailAsset?.remoteUrl ?: thumbnailUrl,
         tags = buildList {
             add(processingState)
             if (authState == "needs_auth") add("needs auth")
@@ -1197,7 +1211,7 @@ private fun RecentSourcesRow(memories: List<MemoryUi>) {
                     modifier = Modifier.padding(MemTokens.spacing.md),
                     verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
                 ) {
-                    IconBadge(memory.icon, MemTokens.colors.accentMuted, MemTokens.colors.accent)
+                    SourceVisual(memory, modifier = Modifier.size(48.dp))
                     Text(
                         memory.title,
                         color = MemTokens.colors.textPrimary,
@@ -1561,7 +1575,7 @@ private fun FeedItem(
     SurfaceCard {
         Column(modifier = Modifier.padding(MemTokens.spacing.md), verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconBadge(memory.icon, MemTokens.colors.accentMuted, MemTokens.colors.accent)
+                SourceVisual(memory, modifier = Modifier.size(64.dp))
                 Spacer(modifier = Modifier.width(MemTokens.spacing.sm))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(memory.type, color = MemTokens.colors.textSecondary, fontSize = 12.sp)
@@ -1594,11 +1608,38 @@ private fun MemoryGridCard(memory: MemoryUi) {
                     .background(MemTokens.colors.accentMuted),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(memory.icon, contentDescription = null, tint = MemTokens.colors.accent, modifier = Modifier.size(36.dp))
+                SourceVisual(memory, modifier = Modifier.fillMaxSize())
             }
             Text(memory.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(memory.source, color = MemTokens.colors.textSecondary, fontSize = 12.sp, maxLines = 1)
         }
+    }
+}
+
+@Composable
+private fun SourceVisual(memory: MemoryUi, modifier: Modifier = Modifier) {
+    val thumbnail = memory.thumbnailUrl
+    if (thumbnail.isNullOrBlank()) {
+        Box(
+            modifier = modifier
+                .clip(MemTokens.shapes.md)
+                .background(MemTokens.colors.accentMuted),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(memory.icon, contentDescription = null, tint = MemTokens.colors.accent, modifier = Modifier.size(28.dp))
+        }
+    } else {
+        AsyncImage(
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(thumbnail)
+                .crossfade(true)
+                .build(),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = modifier
+                .clip(MemTokens.shapes.md)
+                .background(MemTokens.colors.surfaceMuted),
+        )
     }
 }
 
@@ -1853,6 +1894,7 @@ private fun sampleMemories() = listOf(
         "Practical framework for identity, environment, and systems over willpower.",
         "2h ago",
         Icons.Rounded.SmartDisplay,
+        null,
         listOf("habits", "productivity", "mindset"),
     ),
     MemoryUi(
@@ -1863,6 +1905,7 @@ private fun sampleMemories() = listOf(
         "A saved essay about consciousness, otherness, and the limits of understanding.",
         "5h ago",
         Icons.AutoMirrored.Rounded.MenuBook,
+        null,
         listOf("philosophy", "science fiction"),
     ),
     MemoryUi(
@@ -1873,6 +1916,7 @@ private fun sampleMemories() = listOf(
         "Review of deep work, reading, outreach, and product prototype progress.",
         "1d ago",
         Icons.AutoMirrored.Rounded.Article,
+        null,
         listOf("reflection", "goals"),
     ),
     MemoryUi(
@@ -1883,6 +1927,7 @@ private fun sampleMemories() = listOf(
         "Screenshotted ideas for coast hikes, hidden beaches, and local spots.",
         "1d ago",
         Icons.Rounded.Bookmarks,
+        null,
         listOf("travel", "portugal"),
     ),
     MemoryUi(
@@ -1893,6 +1938,7 @@ private fun sampleMemories() = listOf(
         "Key insight on empathy in design and observing behavior before asking questions.",
         "2d ago",
         Icons.Rounded.Waves,
+        null,
         listOf("design", "empathy"),
     ),
 )

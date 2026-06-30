@@ -99,6 +99,36 @@ data class DocumentChunkEntity(
     val createdAt: Long,
 )
 
+@Entity(
+    tableName = "assets",
+    foreignKeys = [
+        ForeignKey(
+            entity = SourceEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sourceId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [
+        Index(value = ["sourceId"]),
+        Index(value = ["assetType"]),
+        Index(value = ["role"]),
+    ],
+)
+data class AssetEntity(
+    @PrimaryKey val id: String,
+    val sourceId: String,
+    val assetType: String,
+    val role: String,
+    val remoteUrl: String?,
+    val localPath: String?,
+    val mimeType: String?,
+    val width: Int?,
+    val height: Int?,
+    val durationMs: Long?,
+    val createdAt: Long,
+)
+
 @Fts4
 @Entity(tableName = "source_search")
 data class SourceSearchEntity(
@@ -241,6 +271,18 @@ interface DocumentChunkDao {
 }
 
 @Dao
+interface AssetDao {
+    @Query("SELECT * FROM assets ORDER BY createdAt DESC")
+    fun observeAssets(): Flow<List<AssetEntity>>
+
+    @Query("SELECT * FROM assets WHERE sourceId = :sourceId AND role = :role LIMIT 1")
+    suspend fun findBySourceAndRole(sourceId: String, role: String): AssetEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(asset: AssetEntity)
+}
+
+@Dao
 interface SourceSearchDao {
     @Query("DELETE FROM source_search WHERE sourceId = :sourceId")
     suspend fun deleteForSource(sourceId: String)
@@ -292,19 +334,21 @@ interface CollectionDao {
         SourceEntity::class,
         IngestionJobEntity::class,
         DocumentChunkEntity::class,
+        AssetEntity::class,
         SourceSearchEntity::class,
         TagEntity::class,
         SourceTagEntity::class,
         CollectionEntity::class,
         CollectionSourceEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
 )
 abstract class MemDatabase : RoomDatabase() {
     abstract fun sourceDao(): SourceDao
     abstract fun ingestionJobDao(): IngestionJobDao
     abstract fun documentChunkDao(): DocumentChunkDao
+    abstract fun assetDao(): AssetDao
     abstract fun sourceSearchDao(): SourceSearchDao
     abstract fun tagDao(): TagDao
     abstract fun collectionDao(): CollectionDao
@@ -339,6 +383,45 @@ abstract class MemDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 createOrganizationTables(db)
             }
+        }
+
+        private val migration3To4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                createAssetTables(db)
+            }
+        }
+
+        private fun createAssetTables(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `assets` (
+                    `id` TEXT NOT NULL,
+                    `sourceId` TEXT NOT NULL,
+                    `assetType` TEXT NOT NULL,
+                    `role` TEXT NOT NULL,
+                    `remoteUrl` TEXT,
+                    `localPath` TEXT,
+                    `mimeType` TEXT,
+                    `width` INTEGER,
+                    `height` INTEGER,
+                    `durationMs` INTEGER,
+                    `createdAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`),
+                    FOREIGN KEY(`sourceId`) REFERENCES `sources`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_assets_sourceId` ON `assets` (`sourceId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_assets_assetType` ON `assets` (`assetType`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_assets_role` ON `assets` (`role`)")
+            db.execSQL(
+                """
+                INSERT INTO assets(id, sourceId, assetType, role, remoteUrl, localPath, mimeType, width, height, durationMs, createdAt)
+                SELECT id || ':thumbnail', id, 'image', 'thumbnail', thumbnailUrl, NULL, NULL, NULL, NULL, NULL, updatedAt
+                FROM sources
+                WHERE thumbnailUrl IS NOT NULL AND thumbnailUrl != ''
+                """.trimIndent(),
+            )
         }
 
         private fun createOrganizationTables(db: SupportSQLiteDatabase) {
@@ -406,7 +489,7 @@ abstract class MemDatabase : RoomDatabase() {
                     MemDatabase::class.java,
                     "mem.db",
                 )
-                    .addMigrations(migration1To2, migration2To3)
+                    .addMigrations(migration1To2, migration2To3, migration3To4)
                     .build()
                     .also { instance = it }
             }

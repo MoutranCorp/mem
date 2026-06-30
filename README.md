@@ -26,6 +26,8 @@ model used by `mobile-agent`.
 - Inbox supports retry and cancel actions for durable jobs.
 - Durable tag, collection, and collection membership tables.
 - Library feed can add a source to `Saved playlist` and tag it for review.
+- Durable asset table for thumbnails/files, with extracted thumbnails rendered
+  in recent sources, feed, and grid where available.
 
 The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and
@@ -68,7 +70,7 @@ The production direction is documented in:
 
 Immediate next steps:
 
-1. Add Asset table and thumbnail/file persistence.
+1. Add local thumbnail/file caching for durable assets.
 2. Build collection detail screens and richer tag editing.
 3. Expand FTS indexing to transcript/caption chunks and richer ranking.
 4. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable

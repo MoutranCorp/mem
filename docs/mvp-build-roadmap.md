@@ -59,13 +59,15 @@ persist as sources, and Inbox/Library/Home observe database state. Library
 search is backed by a Room FTS table, and Inbox has first-pass retry/cancel
 actions. Durable tags, collections, and collection membership have been added,
 with a first feed action for adding sources to `Saved playlist`.
+The asset table has also been added, and extracted remote thumbnails are stored
+as durable asset records and rendered in the Library UI where available.
 
 Deliverables:
 
 - Add Room. Done.
 - Add Source, IngestionJob, DocumentChunk, Asset, Tag, Collection tables.
-  Source, IngestionJob, DocumentChunk, Tag, Collection, and membership tables
-  are done; Asset remains.
+  Source, IngestionJob, DocumentChunk, Asset, Tag, Collection, and membership
+  tables are done.
 - Add migrations from version 1 onward.
 - Add repository layer.
 - Add Inbox screen backed by DB state. Done.
@@ -75,6 +77,7 @@ Deliverables:
 - Add retry/cancel controls. Started.
 - Add durable organization. Started with tags, collections, and playlist
   membership.
+- Add durable assets. Started with remote thumbnail asset records.
 
 Exit criteria:
 

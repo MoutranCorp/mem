@@ -28,8 +28,9 @@ class MemoryRepository(private val database: MemDatabase) {
             sourceFlow,
             database.ingestionJobDao().observeJobs(),
             database.collectionDao().observeCollectionSummaries(),
-        ) { sources, jobs, collections ->
-            MemoryState(sources = sources, jobs = jobs, collections = collections)
+            database.assetDao().observeAssets(),
+        ) { sources, jobs, collections, assets ->
+            MemoryState(sources = sources, jobs = jobs, collections = collections, assets = assets)
         }
     }
 
@@ -133,6 +134,23 @@ class MemoryRepository(private val database: MemDatabase) {
                 if (source.authState == "needs_auth") "needs auth" else null,
             ),
         )
+        result.thumbnailUrl?.takeIf { it.isNotBlank() }?.let { thumbnailUrl ->
+            database.assetDao().upsert(
+                AssetEntity(
+                    id = stableId("asset:${source.id}:thumbnail"),
+                    sourceId = source.id,
+                    assetType = "image",
+                    role = "thumbnail",
+                    remoteUrl = thumbnailUrl,
+                    localPath = null,
+                    mimeType = null,
+                    width = null,
+                    height = null,
+                    durationMs = null,
+                    createdAt = now,
+                ),
+            )
+        }
         indexSource(source, result.summary)
         database.ingestionJobDao().upsert(
             IngestionJobEntity(
@@ -267,6 +285,7 @@ data class MemoryState(
     val sources: List<SourceEntity>,
     val jobs: List<IngestionJobEntity>,
     val collections: List<CollectionSummary>,
+    val assets: List<AssetEntity>,
 )
 
 data class QueuedSource(
