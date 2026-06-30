@@ -7,11 +7,20 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.flow
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.net.URI
 import java.security.MessageDigest
+import kotlin.math.sqrt
 import java.util.Locale
 import java.util.UUID
+
+private const val LOCAL_EMBEDDING_MODEL_ID = "local_hash_v1_text_128"
+private const val LOCAL_EMBEDDING_PROVIDER = "local"
+private const val LOCAL_EMBEDDING_MODEL = "hash-v1-text-128"
+private const val LOCAL_EMBEDDING_DIMENSIONS = 128
 
 class MemoryRepository(private val database: MemDatabase) {
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -39,16 +48,66 @@ class MemoryRepository(private val database: MemDatabase) {
     @OptIn(ExperimentalCoroutinesApi::class)
     fun observeSearchResults(query: Flow<String>): Flow<List<SearchResultData>> {
         return query
-            .map(::toFtsQuery)
+            .map { it.trim() }
             .distinctUntilChanged()
-            .flatMapLatest { ftsQuery ->
-                if (ftsQuery.isBlank()) {
+            .flatMapLatest { rawQuery ->
+                if (rawQuery.isBlank()) {
                     flowOf(emptyList())
                 } else {
-                    database.chunkSearchDao().observeSearchResults(ftsQuery, 40)
+                    flow {
+                        emit(searchMemory(rawQuery))
+                    }
                 }
             }
-            .map { results -> results.map { it.toSearchResultData() } }
+    }
+
+    private suspend fun searchMemory(rawQuery: String): List<SearchResultData> {
+        val ftsQuery = toFtsQuery(rawQuery)
+        val ftsResults = if (ftsQuery.isBlank()) {
+            emptyList()
+        } else {
+            database.chunkSearchDao().searchResults(ftsQuery, 60).mapIndexed { index, result ->
+                result.toSearchResultData(
+                    retrievalMode = "keyword",
+                    rankScore = 1.0f / (index + 1),
+                )
+            }
+        }
+        val semanticResults = semanticSearch(rawQuery, 60)
+        return fuseSearchResults(ftsResults, semanticResults).take(40)
+    }
+
+    private suspend fun semanticSearch(rawQuery: String, limit: Int): List<SearchResultData> {
+        val queryVector = localEmbedding(rawQuery)
+        return database.chunkEmbeddingDao()
+            .candidates("text", 5_000)
+            .mapNotNull { candidate ->
+                val score = cosineSimilarity(queryVector, candidate.vector.toFloatVector(candidate.dimensions))
+                if (score < 0.08f) return@mapNotNull null
+                candidate.toSearchResultData(score)
+            }
+            .sortedByDescending { it.rankScore }
+            .take(limit)
+    }
+
+    private fun fuseSearchResults(keyword: List<SearchResultData>, semantic: List<SearchResultData>): List<SearchResultData> {
+        val byChunk = linkedMapOf<String, SearchResultData>()
+        (keyword + semantic).forEachIndexed { index, result ->
+            val existing = byChunk[result.chunkId]
+            val sourceDedupePenalty = byChunk.values.count { it.sourceId == result.sourceId } * 0.03f
+            val recencyBoost = 1.0f / (1 + index)
+            val score = result.rankScore + recencyBoost - sourceDedupePenalty
+            if (existing == null || score > existing.rankScore) {
+                byChunk[result.chunkId] = result.copy(rankScore = score)
+            } else if (existing.retrievalMode != result.retrievalMode) {
+                byChunk[result.chunkId] = existing.copy(
+                    retrievalMode = "hybrid",
+                    matchReason = existing.matchReason.replace("Keyword", "Hybrid").replace("Semantic", "Hybrid"),
+                    rankScore = existing.rankScore + 0.25f,
+                )
+            }
+        }
+        return byChunk.values.sortedByDescending { it.rankScore }
     }
 
     suspend fun chunksForSource(sourceId: String, limit: Int = 80): List<ContentChunkData> {
@@ -66,6 +125,11 @@ class MemoryRepository(private val database: MemDatabase) {
                 provider = chunk.provider,
             )
         }
+    }
+
+    suspend fun sourceSnapshot(sourceId: String): SourceSnapshot? {
+        val source = database.sourceDao().findById(sourceId) ?: return null
+        return SourceSnapshot(source = source, assets = database.assetDao().findBySource(sourceId))
     }
 
     suspend fun createQueuedSource(input: String): QueuedSource {
@@ -191,6 +255,7 @@ class MemoryRepository(private val database: MemDatabase) {
             listOf("metadata", "rag_text", "transcript", "transcript_segment", "article", "document", "note"),
         )
         database.chunkSearchDao().deleteForSource(source.id)
+        database.chunkEmbeddingDao().deleteForSource(source.id)
         result.captionTrack?.let { track ->
             database.captionTrackDao().upsert(
                 CaptionTrackEntity(
@@ -228,6 +293,7 @@ class MemoryRepository(private val database: MemDatabase) {
             }
         }
         val indexedText = storeChunks(source, extractedChunks, now)
+        ensureLocalEmbeddingModel(now)
         indexSource(source, listOfNotNull(result.summary, indexedText).joinToString("\n\n"))
         database.ingestionJobDao().upsert(
             IngestionJobEntity(
@@ -548,11 +614,40 @@ class MemoryRepository(private val database: MemDatabase) {
                         tags = tags,
                     ),
                 )
+                database.chunkEmbeddingDao().upsert(
+                    ChunkEmbeddingEntity(
+                        id = stableId("embedding:${entity.id}:$LOCAL_EMBEDDING_MODEL_ID"),
+                        chunkId = entity.id,
+                        sourceId = source.id,
+                        modelId = LOCAL_EMBEDDING_MODEL_ID,
+                        embeddingType = "text",
+                        dimensions = LOCAL_EMBEDDING_DIMENSIONS,
+                        vector = localEmbedding(chunk.text).toByteArrayVector(),
+                        contentHash = entity.contentHash ?: chunk.text.contentHash(),
+                        createdAt = now,
+                    ),
+                )
                 if (indexedText.length < 12_000) {
                     indexedText.append(chunk.text.take(1_200)).append('\n')
                 }
             }
         return indexedText.toString()
+    }
+
+    private suspend fun ensureLocalEmbeddingModel(now: Long) {
+        database.embeddingModelDao().upsert(
+            EmbeddingModelEntity(
+                id = LOCAL_EMBEDDING_MODEL_ID,
+                provider = LOCAL_EMBEDDING_PROVIDER,
+                model = LOCAL_EMBEDDING_MODEL,
+                embeddingType = "text",
+                dimensions = LOCAL_EMBEDDING_DIMENSIONS,
+                quantization = "float32",
+                status = "local_fallback",
+                createdAt = now,
+                updatedAt = now,
+            ),
+        )
     }
 
     private suspend fun ensureTags(sourceId: String, names: List<String>) {
@@ -643,6 +738,8 @@ data class SearchResultData(
     val startTimeMs: Long?,
     val endTimeMs: Long?,
     val savedAt: Long,
+    val retrievalMode: String,
+    val rankScore: Float,
 )
 
 data class ContentChunkData(
@@ -656,6 +753,11 @@ data class ContentChunkData(
     val page: Int?,
     val sectionTitle: String?,
     val provider: String?,
+)
+
+data class SourceSnapshot(
+    val source: SourceEntity,
+    val assets: List<AssetEntity>,
 )
 
 fun canonicalize(input: String): String {
@@ -694,14 +796,15 @@ private fun stableId(value: String): String {
 
 private fun String.contentHash(): String = stableId("content:$this")
 
-private fun ChunkSearchResult.toSearchResultData(): SearchResultData {
+private fun ChunkSearchResult.toSearchResultData(retrievalMode: String, rankScore: Float): SearchResultData {
     val timeLabel = startTimeMs?.let { " at ${it.timestampLabel()}" }
+    val prefix = if (retrievalMode == "semantic") "Semantic" else "Keyword"
     val reason = when (chunkType) {
-        "transcript" -> "Transcript match${timeLabel.orEmpty()}"
-        "transcript_segment" -> "Transcript segment${timeLabel.orEmpty()}"
-        "article", "document", "note" -> "${chunkType.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }} text match"
-        "visual" -> "Visual observation${timeLabel.orEmpty()}"
-        else -> "Indexed memory match"
+        "transcript" -> "$prefix transcript match${timeLabel.orEmpty()}"
+        "transcript_segment" -> "$prefix transcript segment${timeLabel.orEmpty()}"
+        "article", "document", "note" -> "$prefix ${chunkType.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }} text match"
+        "visual" -> "$prefix visual observation${timeLabel.orEmpty()}"
+        else -> "$prefix indexed memory match"
     }
     return SearchResultData(
         sourceId = sourceId,
@@ -716,7 +819,112 @@ private fun ChunkSearchResult.toSearchResultData(): SearchResultData {
         startTimeMs = startTimeMs,
         endTimeMs = endTimeMs,
         savedAt = savedAt,
+        retrievalMode = retrievalMode,
+        rankScore = rankScore,
     )
+}
+
+private fun ChunkEmbeddingCandidate.toSearchResultData(score: Float): SearchResultData {
+    val timeLabel = startTimeMs?.let { " at ${it.timestampLabel()}" }
+    val reason = when (chunkType) {
+        "transcript" -> "Semantic transcript match${timeLabel.orEmpty()}"
+        "article", "document", "note" -> "Semantic ${chunkType.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }} match"
+        "visual" -> "Semantic visual match${timeLabel.orEmpty()}"
+        else -> "Semantic indexed memory match"
+    }
+    return SearchResultData(
+        sourceId = sourceId,
+        chunkId = chunkId,
+        title = title,
+        sourceType = sourceType,
+        originDomain = originDomain,
+        author = author,
+        snippet = body.take(360),
+        chunkType = chunkType,
+        matchReason = reason,
+        startTimeMs = startTimeMs,
+        endTimeMs = endTimeMs,
+        savedAt = savedAt,
+        retrievalMode = "semantic",
+        rankScore = score,
+    )
+}
+
+private fun localEmbedding(text: String): FloatArray {
+    val vector = FloatArray(LOCAL_EMBEDDING_DIMENSIONS)
+    tokenizeForEmbedding(text).forEach { token ->
+        val hash = stableId("embed:$token")
+        val bucket = hash.take(8).toLong(16).mod(LOCAL_EMBEDDING_DIMENSIONS)
+        val sign = if (hash.drop(8).take(2).toInt(16) % 2 == 0) 1f else -1f
+        val weight = when {
+            token.length > 10 -> 1.35f
+            token.length > 6 -> 1.15f
+            else -> 1f
+        }
+        vector[bucket] += sign * weight
+    }
+    normalizeInPlace(vector)
+    return vector
+}
+
+private fun tokenizeForEmbedding(text: String): List<String> {
+    val stop = setOf(
+        "the", "and", "for", "with", "that", "this", "from", "into", "your", "you", "are", "was", "were",
+        "have", "has", "had", "not", "but", "about", "what", "when", "where", "how", "why", "can", "will",
+    )
+    return text
+        .lowercase(Locale.US)
+        .split(Regex("[^a-z0-9]+"))
+        .filter { it.length >= 3 && it !in stop }
+        .flatMap { token ->
+            buildList {
+                add(token)
+                simpleStem(token)?.let(::add)
+            }
+        }
+}
+
+private fun simpleStem(token: String): String? {
+    return when {
+        token.endsWith("ing") && token.length > 6 -> token.dropLast(3)
+        token.endsWith("ed") && token.length > 5 -> token.dropLast(2)
+        token.endsWith("s") && token.length > 4 -> token.dropLast(1)
+        else -> null
+    }?.takeIf { it.length >= 3 && it != token }
+}
+
+private fun normalizeInPlace(vector: FloatArray) {
+    var sum = 0f
+    vector.forEach { sum += it * it }
+    val norm = sqrt(sum)
+    if (norm <= 0f) return
+    for (index in vector.indices) {
+        vector[index] = vector[index] / norm
+    }
+}
+
+private fun cosineSimilarity(left: FloatArray, right: FloatArray): Float {
+    val size = minOf(left.size, right.size)
+    var score = 0f
+    for (index in 0 until size) {
+        score += left[index] * right[index]
+    }
+    return score
+}
+
+private fun FloatArray.toByteArrayVector(): ByteArray {
+    val buffer = ByteBuffer.allocate(size * 4).order(ByteOrder.LITTLE_ENDIAN)
+    forEach(buffer::putFloat)
+    return buffer.array()
+}
+
+private fun ByteArray.toFloatVector(dimensions: Int): FloatArray {
+    val buffer = ByteBuffer.wrap(this).order(ByteOrder.LITTLE_ENDIAN)
+    val values = FloatArray(dimensions)
+    for (index in 0 until dimensions) {
+        if (buffer.remaining() >= 4) values[index] = buffer.float
+    }
+    return values
 }
 
 private fun Long.timestampLabel(): String {

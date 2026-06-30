@@ -295,7 +295,10 @@ Exit criteria:
 4. Add benchmark fixtures for saved videos, articles, notes, PDFs, and image
    memories.
 5. Implement the embedding provider and vector index interfaces with a first
-   local/cloud provider behind user-visible settings.
+   local/cloud provider behind user-visible settings. Started with persisted
+   chunk embeddings, a local deterministic semantic fallback, and hybrid
+   keyword/semantic result fusion. A production local/cloud embedding provider
+   and approximate vector index remain.
 6. Implement the first agent tool set: search memory, get source/chunks, and
    draft collection/playlist actions with preview/undo.
 7. Add visual observations for local/authorized videos so Mem can answer visual

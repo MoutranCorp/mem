@@ -197,6 +197,41 @@ data class EmbeddingModelEntity(
 )
 
 @Entity(
+    tableName = "chunk_embeddings",
+    foreignKeys = [
+        ForeignKey(
+            entity = DocumentChunkEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["chunkId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
+            entity = SourceEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sourceId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [
+        Index(value = ["chunkId"]),
+        Index(value = ["sourceId"]),
+        Index(value = ["modelId"]),
+        Index(value = ["contentHash"]),
+    ],
+)
+data class ChunkEmbeddingEntity(
+    @PrimaryKey val id: String,
+    val chunkId: String,
+    val sourceId: String,
+    val modelId: String,
+    val embeddingType: String,
+    val dimensions: Int,
+    val vector: ByteArray,
+    val contentHash: String,
+    val createdAt: Long,
+)
+
+@Entity(
     tableName = "visual_observations",
     foreignKeys = [
         ForeignKey(
@@ -355,6 +390,22 @@ data class ChunkSearchResult(
     val savedAt: Long,
 )
 
+data class ChunkEmbeddingCandidate(
+    val sourceId: String,
+    val chunkId: String,
+    val title: String,
+    val sourceType: String,
+    val originDomain: String?,
+    val author: String?,
+    val body: String,
+    val chunkType: String,
+    val startTimeMs: Long?,
+    val endTimeMs: Long?,
+    val savedAt: Long,
+    val dimensions: Int,
+    val vector: ByteArray,
+)
+
 @Dao
 interface SourceDao {
     @Query("SELECT * FROM sources ORDER BY savedAt DESC")
@@ -464,6 +515,23 @@ interface ChunkSearchDao {
         """,
     )
     fun observeSearchResults(query: String, limit: Int): Flow<List<ChunkSearchResult>>
+
+    @Query(
+        """
+        SELECT sources.id AS sourceId, chunk_search.chunkId AS chunkId, sources.title AS title,
+               sources.sourceType AS sourceType, sources.originDomain AS originDomain,
+               sources.author AS author, chunk_search.body AS body,
+               document_chunks.chunkType AS chunkType, document_chunks.startTimeMs AS startTimeMs,
+               document_chunks.endTimeMs AS endTimeMs, sources.savedAt AS savedAt
+        FROM chunk_search
+        INNER JOIN sources ON sources.id = chunk_search.sourceId
+        LEFT JOIN document_chunks ON document_chunks.id = chunk_search.chunkId
+        WHERE chunk_search MATCH :query
+        ORDER BY sources.savedAt DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun searchResults(query: String, limit: Int): List<ChunkSearchResult>
 }
 
 @Dao
@@ -482,6 +550,33 @@ interface CaptionTrackDao {
 interface EmbeddingModelDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(model: EmbeddingModelEntity)
+}
+
+@Dao
+interface ChunkEmbeddingDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(embedding: ChunkEmbeddingEntity)
+
+    @Query("DELETE FROM chunk_embeddings WHERE sourceId = :sourceId")
+    suspend fun deleteForSource(sourceId: String)
+
+    @Query(
+        """
+        SELECT sources.id AS sourceId, document_chunks.id AS chunkId, sources.title AS title,
+               sources.sourceType AS sourceType, sources.originDomain AS originDomain,
+               sources.author AS author, document_chunks.text AS body,
+               document_chunks.chunkType AS chunkType, document_chunks.startTimeMs AS startTimeMs,
+               document_chunks.endTimeMs AS endTimeMs, sources.savedAt AS savedAt,
+               chunk_embeddings.dimensions AS dimensions, chunk_embeddings.vector AS vector
+        FROM chunk_embeddings
+        INNER JOIN document_chunks ON document_chunks.id = chunk_embeddings.chunkId
+        INNER JOIN sources ON sources.id = chunk_embeddings.sourceId
+        WHERE chunk_embeddings.embeddingType = :embeddingType
+        ORDER BY sources.savedAt DESC
+        LIMIT :limit
+        """,
+    )
+    suspend fun candidates(embeddingType: String, limit: Int): List<ChunkEmbeddingCandidate>
 }
 
 @Dao
@@ -556,6 +651,7 @@ interface AuthSessionDao {
         SourceSearchEntity::class,
         ChunkSearchEntity::class,
         EmbeddingModelEntity::class,
+        ChunkEmbeddingEntity::class,
         VisualObservationEntity::class,
         SearchQueryEntity::class,
         TagEntity::class,
@@ -564,7 +660,7 @@ interface AuthSessionDao {
         CollectionSourceEntity::class,
         AuthSessionEntity::class,
     ],
-    version = 6,
+    version = 7,
     exportSchema = true,
 )
 abstract class MemDatabase : RoomDatabase() {
@@ -576,6 +672,7 @@ abstract class MemDatabase : RoomDatabase() {
     abstract fun sourceSearchDao(): SourceSearchDao
     abstract fun chunkSearchDao(): ChunkSearchDao
     abstract fun embeddingModelDao(): EmbeddingModelDao
+    abstract fun chunkEmbeddingDao(): ChunkEmbeddingDao
     abstract fun visualObservationDao(): VisualObservationDao
     abstract fun searchQueryDao(): SearchQueryDao
     abstract fun tagDao(): TagDao
@@ -631,6 +728,38 @@ abstract class MemDatabase : RoomDatabase() {
                 createSearchAndRagTables(db)
             }
         }
+
+        private val migration6To7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                createEmbeddingTables(db)
+            }
+        }
+
+        private fun createEmbeddingTables(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `chunk_embeddings` (
+                    `id` TEXT NOT NULL,
+                    `chunkId` TEXT NOT NULL,
+                    `sourceId` TEXT NOT NULL,
+                    `modelId` TEXT NOT NULL,
+                    `embeddingType` TEXT NOT NULL,
+                    `dimensions` INTEGER NOT NULL,
+                    `vector` BLOB NOT NULL,
+                    `contentHash` TEXT NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`),
+                    FOREIGN KEY(`chunkId`) REFERENCES `document_chunks`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(`sourceId`) REFERENCES `sources`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_chunk_embeddings_chunkId` ON `chunk_embeddings` (`chunkId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_chunk_embeddings_sourceId` ON `chunk_embeddings` (`sourceId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_chunk_embeddings_modelId` ON `chunk_embeddings` (`modelId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_chunk_embeddings_contentHash` ON `chunk_embeddings` (`contentHash`)")
+        }
+
 
         private fun createSearchAndRagTables(db: SupportSQLiteDatabase) {
             db.execSQL("ALTER TABLE `document_chunks` ADD COLUMN `language` TEXT")
@@ -852,7 +981,7 @@ abstract class MemDatabase : RoomDatabase() {
                     MemDatabase::class.java,
                     "mem.db",
                 )
-                    .addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6)
+                    .addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6, migration6To7)
                     .build()
                     .also { instance = it }
             }

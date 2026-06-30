@@ -168,6 +168,7 @@ import com.moutrancorp.memspike.data.MemoryRepository
 import com.moutrancorp.memspike.data.MemoryState
 import com.moutrancorp.memspike.data.SearchResultData
 import com.moutrancorp.memspike.data.SourceEntity
+import com.moutrancorp.memspike.data.SourceSnapshot
 import com.moutrancorp.memspike.data.authDomain
 import com.moutrancorp.memspike.data.canonicalize
 import com.moutrancorp.memspike.data.originDomain
@@ -673,6 +674,22 @@ private class MemAppState(
                 selectedMemoryChunks.clear()
                 selectedMemoryChunks.addAll(chunks.map { it.toContentChunkUi() })
             }
+        }
+    }
+
+    fun openSearchResult(result: SearchResultUi) {
+        val existing = memories.firstOrNull { it.id == result.sourceId }
+        if (existing != null) {
+            openSourceDetail(existing)
+            return
+        }
+        scope.launch {
+            val snapshot = withContext(Dispatchers.IO) { repository.sourceSnapshot(result.sourceId) }
+            if (snapshot == null) {
+                logOutput = "Could not load source for citation ${result.chunkId}."
+                return@launch
+            }
+            openSourceDetail(snapshot.toMemoryUi())
         }
     }
 
@@ -1653,6 +1670,8 @@ private data class SearchResultUi(
     val matchReason: String,
     val chunkType: String,
     val startTimeLabel: String?,
+    val retrievalMode: String,
+    val rankLabel: String,
 )
 
 private data class ContentChunkUi(
@@ -1674,7 +1693,15 @@ private fun SearchResultData.toSearchResultUi(): SearchResultUi {
         matchReason = matchReason,
         chunkType = chunkType,
         startTimeLabel = startTimeMs?.timestampLabel(),
+        retrievalMode = retrievalMode,
+        rankLabel = "%.2f".format(rankScore),
     )
+}
+
+private fun SourceSnapshot.toMemoryUi(): MemoryUi {
+    val thumbnail = assets.firstOrNull { it.role == "thumbnail" }
+    val playback = assets.firstOrNull { it.role == "playback" }
+    return source.toMemoryUi(thumbnail, playback)
 }
 
 private fun ContentChunkData.toContentChunkUi(): ContentChunkUi {
@@ -2276,9 +2303,7 @@ private fun LibraryScreen(state: MemAppState) {
             Spacer(modifier = Modifier.height(MemTokens.spacing.sm))
             SearchResultsStrip(
                 results = state.searchResults,
-                onOpen = { result ->
-                    state.memories.firstOrNull { it.id == result.sourceId }?.let(state::openSourceDetail)
-                },
+                onOpen = state::openSearchResult,
             )
             Spacer(modifier = Modifier.height(MemTokens.spacing.md))
             LocalAgentSearchPanel(
@@ -2360,6 +2385,7 @@ private fun SearchResultCard(result: SearchResultUi, onClick: () -> Unit) {
                 MetadataTiny(result.source)
                 result.startTimeLabel?.let { MetadataTiny(it) }
                 MetadataTiny(result.chunkType)
+                MetadataTiny(result.retrievalMode)
             }
         }
     }
@@ -2374,6 +2400,7 @@ private fun LocalAgentSearchPanel(
     val sourceCount = results.map { it.sourceId }.distinct().size
     val transcriptCount = results.count { it.chunkType == "transcript" }
     val contextTypes = results.map { it.chunkType }.distinct().take(4).joinToString(", ").ifBlank { "none" }
+    val retrievalModes = results.map { it.retrievalMode }.distinct().joinToString(" + ").ifBlank { "none" }
     SurfaceCard(container = MemTokens.colors.textPrimary, border = null) {
         Column(
             modifier = Modifier.padding(MemTokens.spacing.md),
@@ -2389,7 +2416,7 @@ private fun LocalAgentSearchPanel(
                 text = if (results.isEmpty()) {
                     "I could not find indexed chunks for \"$query\" yet. Capture sources with transcripts/articles or try deterministic filters like type:video, site:youtube.com, has:transcript."
                 } else {
-                    "I found $sourceCount source${if (sourceCount == 1) "" else "s"} with grounded chunks for \"$query\". Context types: $contextTypes. Transcript-backed citations: $transcriptCount."
+                    "I found $sourceCount source${if (sourceCount == 1) "" else "s"} with grounded chunks for \"$query\". Retrieval: $retrievalModes. Context types: $contextTypes. Transcript-backed citations: $transcriptCount."
                 },
                 color = Color.White.copy(alpha = 0.78f),
                 fontSize = 13.sp,

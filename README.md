@@ -140,7 +140,9 @@ Immediate next steps:
    document with stable IDs, source URL, timestamp, title, tags, and transcript
    segments.
    Started with provider interfaces for embeddings, vector search, and agent
-   tool execution.
+   tool execution. Room now persists chunk embeddings and runs a local
+   deterministic exact-scan semantic fallback, with hybrid keyword/semantic
+   fusion in cited search results.
 6. Add the first agent search tool with cited results and action previews.
    Started with a local agent search panel that summarizes grounded citations
    and can draft a collection from the cited source set.
