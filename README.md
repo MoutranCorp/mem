@@ -156,7 +156,10 @@ Immediate next steps:
 6. Add the first agent search tool with cited results and action previews.
    Started with a local agent search panel that summarizes grounded citations
    and can draft a collection from the cited source set. Collection drafts now
-   create auditable agent action records with preview, apply, and undo.
+   create auditable agent action records with preview, apply, and undo. The
+   repository now exposes reusable memory tools for `search_memory`,
+   `get_source_context`, `summarize_source`, and `draft_collection` through the
+   same tool-call interface a model-backed runtime will use.
 7. Build visual indexing for local/authorized videos so Mem can answer queries
    about what happens visually, not only what is spoken.
    Started with local frame-sample visual observations for playable videos,

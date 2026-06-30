@@ -1,5 +1,7 @@
 package com.moutrancorp.memspike.data
 
+import com.moutrancorp.memspike.ai.AgentToolCall
+import com.moutrancorp.memspike.ai.AgentToolResult
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -26,6 +28,24 @@ private const val LOCAL_EMBEDDING_MODEL = "hash-v1-text-128"
 private const val LOCAL_EMBEDDING_DIMENSIONS = 128
 
 class MemoryRepository(private val database: MemDatabase) {
+    fun availableMemoryTools(): List<String> {
+        return listOf("search_memory", "get_source_context", "summarize_source", "draft_collection")
+    }
+
+    suspend fun runMemoryTool(call: AgentToolCall): AgentToolResult {
+        val args = runCatching { JSONObject(call.argumentsJson) }.getOrElse { JSONObject() }
+        val result = when (call.name) {
+            "search_memory" -> runSearchMemoryTool(args)
+            "get_source_context" -> runGetSourceContextTool(args)
+            "summarize_source" -> runSummarizeSourceTool(args)
+            "draft_collection" -> runDraftCollectionTool(args)
+            else -> JSONObject()
+                .put("ok", false)
+                .put("error", "Unknown memory tool: ${call.name}")
+        }
+        return AgentToolResult(call = call, resultJson = result.toString())
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     fun observeMemoryState(query: Flow<String>): Flow<MemoryState> {
         val sourceFlow = query
@@ -449,6 +469,75 @@ class MemoryRepository(private val database: MemDatabase) {
         val undone = action.copy(state = "undone", undoneAt = System.currentTimeMillis())
         database.agentActionDao().upsert(undone)
         return undone.toDraft()
+    }
+
+    private suspend fun runSearchMemoryTool(args: JSONObject): JSONObject {
+        val query = args.optString("query").trim()
+        val limit = args.optInt("limit", 8).coerceIn(1, 20)
+        if (query.isBlank()) {
+            return JSONObject()
+                .put("ok", false)
+                .put("error", "query is required")
+        }
+        val results = searchMemory(query).take(limit)
+        return JSONObject()
+            .put("ok", true)
+            .put("tool", "search_memory")
+            .put("query", query)
+            .put("resultCount", results.size)
+            .put("citations", JSONArray(results.map { it.toToolCitationJson() }))
+    }
+
+    private suspend fun runGetSourceContextTool(args: JSONObject): JSONObject {
+        val sourceId = args.optString("sourceId").trim()
+        val limit = args.optInt("limit", 12).coerceIn(1, 40)
+        val snapshot = sourceSnapshot(sourceId) ?: return JSONObject()
+            .put("ok", false)
+            .put("error", "source not found")
+        val chunks = chunksForSource(sourceId, limit)
+        return JSONObject()
+            .put("ok", true)
+            .put("tool", "get_source_context")
+            .put("source", snapshot.toToolSourceJson())
+            .put("chunks", JSONArray(chunks.map { it.toToolChunkJson() }))
+    }
+
+    private suspend fun runSummarizeSourceTool(args: JSONObject): JSONObject {
+        val sourceId = args.optString("sourceId").trim()
+        val snapshot = sourceSnapshot(sourceId) ?: return JSONObject()
+            .put("ok", false)
+            .put("error", "source not found")
+        val chunks = chunksForSource(sourceId, 8)
+        val summary = deterministicSourceSummary(snapshot, chunks)
+        return JSONObject()
+            .put("ok", true)
+            .put("tool", "summarize_source")
+            .put("source", snapshot.toToolSourceJson())
+            .put("summary", summary)
+            .put("citationChunkIds", JSONArray(chunks.take(4).map { it.id }))
+    }
+
+    private suspend fun runDraftCollectionTool(args: JSONObject): JSONObject {
+        val query = args.optString("query").trim()
+        val title = args.optString("title").trim().takeIf { it.isNotBlank() }
+            ?: if (query.isBlank()) "Agent collection" else "Search: ${query.take(42)}"
+        val sourceIds = args.optJSONArray("sourceIds").orEmptyStrings()
+        val rationale = args.optString("rationale").takeIf { it.isNotBlank() }
+            ?: "Drafted from agent-selected memory citations."
+        if (sourceIds.isEmpty()) {
+            return JSONObject()
+                .put("ok", false)
+                .put("error", "sourceIds are required")
+        }
+        val draft = createCollectionDraft(title = title, query = query, sourceIds = sourceIds, rationale = rationale)
+        return JSONObject()
+            .put("ok", true)
+            .put("tool", "draft_collection")
+            .put("actionId", draft.id)
+            .put("state", draft.state)
+            .put("title", draft.title)
+            .put("sourceCount", draft.sourceCount)
+            .put("requiresApproval", true)
     }
 
     suspend fun tagSource(sourceId: String, tagName: String = "review") {
@@ -1017,6 +1106,89 @@ private fun ChunkEmbeddingCandidate.toSearchResultData(score: Float): SearchResu
         rankScore = score,
         rankSignals = "semantic:${"%.2f".format(score)}",
     )
+}
+
+private fun SearchResultData.toToolCitationJson(): JSONObject {
+    return JSONObject()
+        .put("sourceId", sourceId)
+        .put("chunkId", chunkId)
+        .put("title", title)
+        .put("sourceType", sourceType)
+        .put("originDomain", originDomain)
+        .put("author", author)
+        .put("snippet", snippet)
+        .put("chunkType", chunkType)
+        .put("matchReason", matchReason)
+        .put("startTimeMs", startTimeMs)
+        .put("endTimeMs", endTimeMs)
+        .put("retrievalMode", retrievalMode)
+        .put("rankScore", rankScore.toDouble())
+        .put("rankSignals", rankSignals)
+}
+
+private fun SourceSnapshot.toToolSourceJson(): JSONObject {
+    return JSONObject()
+        .put("sourceId", source.id)
+        .put("title", source.title)
+        .put("sourceType", source.sourceType)
+        .put("originDomain", source.originDomain)
+        .put("author", source.author)
+        .put("summary", source.summary)
+        .put("durationSeconds", source.durationSeconds)
+        .put("processingState", source.processingState)
+        .put("authState", source.authState)
+        .put("savedAt", source.savedAt)
+        .put("assetRoles", JSONArray(assets.map { it.role }))
+}
+
+private fun ContentChunkData.toToolChunkJson(): JSONObject {
+    return JSONObject()
+        .put("chunkId", id)
+        .put("sourceId", sourceId)
+        .put("chunkType", chunkType)
+        .put("language", language)
+        .put("startTimeMs", startTimeMs)
+        .put("endTimeMs", endTimeMs)
+        .put("page", page)
+        .put("sectionTitle", sectionTitle)
+        .put("provider", provider)
+        .put("text", text.take(900))
+}
+
+private fun deterministicSourceSummary(snapshot: SourceSnapshot, chunks: List<ContentChunkData>): String {
+    val source = snapshot.source
+    val bestChunks = chunks
+        .sortedWith(
+            compareBy<ContentChunkData> {
+                when (it.chunkType) {
+                    "transcript" -> 0
+                    "article", "document", "note" -> 1
+                    "visual" -> 2
+                    else -> 3
+                }
+            }.thenBy { it.startTimeMs ?: Long.MAX_VALUE },
+        )
+        .take(3)
+    val context = bestChunks.joinToString(" ") { chunk ->
+        val prefix = chunk.startTimeMs?.let { "[${it.timestampLabel()}] " }.orEmpty()
+        prefix + chunk.text
+    }.take(900)
+    return buildString {
+        append(source.title)
+        source.originDomain?.let { append(" from $it") }
+        source.author?.let { append(" by $it") }
+        append(". ")
+        source.summary?.takeIf { it.isNotBlank() }?.let {
+            append(it.take(260))
+            append(" ")
+        }
+        if (context.isNotBlank()) {
+            append("Indexed context: ")
+            append(context)
+        } else {
+            append("No indexed transcript, article, document, note, or visual chunks are available yet.")
+        }
+    }
 }
 
 private fun localEmbedding(text: String): FloatArray {

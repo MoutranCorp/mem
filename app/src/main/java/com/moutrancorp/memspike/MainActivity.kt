@@ -376,6 +376,7 @@ private class MemAppState(
     val collections = mutableStateListOf<CollectionUi>()
     val searchResults = mutableStateListOf<SearchResultUi>()
     val selectedMemoryChunks = mutableStateListOf<ContentChunkUi>()
+    val memoryTools = repository.availableMemoryTools()
 
     init {
         scope.launch {
@@ -2410,6 +2411,7 @@ private fun LibraryScreen(state: MemAppState) {
             LocalAgentSearchPanel(
                 query = state.libraryQuery,
                 results = state.searchResults,
+                tools = state.memoryTools,
                 onCreateCollection = state::createCollectionFromSearchResults,
             )
             Spacer(modifier = Modifier.height(MemTokens.spacing.md))
@@ -2503,6 +2505,7 @@ private fun SearchResultCard(result: SearchResultUi, onClick: () -> Unit) {
 private fun LocalAgentSearchPanel(
     query: String,
     results: List<SearchResultUi>,
+    tools: List<String>,
     onCreateCollection: () -> Unit,
 ) {
     val sourceCount = results.map { it.sourceId }.distinct().size
@@ -2529,6 +2532,13 @@ private fun LocalAgentSearchPanel(
                 color = Color.White.copy(alpha = 0.78f),
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
+            )
+            Text(
+                text = "Tools: ${tools.joinToString(", ")}",
+                color = Color.White.copy(alpha = 0.58f),
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             if (results.isNotEmpty()) {
                 results.take(3).forEach { result ->

@@ -313,7 +313,10 @@ Exit criteria:
 6. Implement the first agent tool set: search memory, get source/chunks, and
    draft collection/playlist actions with preview/undo. Started with
    search-generated collection drafts backed by `agent_actions`, preview,
-   apply, and undo.
+   apply, and undo. The repository now exposes reusable `search_memory`,
+   `get_source_context`, `summarize_source`, and `draft_collection` tools
+   through the same structured tool-call interface intended for a model-backed
+   agent runtime.
 7. Add visual observations for local/authorized videos so Mem can answer visual
    event queries that transcripts cannot cover. Started with local frame-sample
    observations for playable videos, indexed as `visual` chunks. A real
