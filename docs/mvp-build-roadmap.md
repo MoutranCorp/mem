@@ -115,6 +115,8 @@ PDF import now uses packaged `pypdf` to extract embedded text from imported or
 shared PDFs, storing successful extraction output as durable `rag_text`.
 Image import now works from the Capture file picker and Android share sheet,
 copying images into app-private storage and rendering them locally in Library.
+Auth-gated extractor failures now emit structured `needs_auth` candidates,
+persist as first-class sources, and show a focused auth callout with retry.
 
 Deliverables:
 
@@ -126,12 +128,13 @@ Deliverables:
   PDF text extraction.
 - Image import plus OCR spike. Started with local image import; OCR remains.
 - Voice note plus transcription spike.
-- Auth-gated source result type.
+- Auth-gated source result type. Started with structured `needs_auth` results.
 
 Exit criteria:
 
 - YouTube/public video links become searchable sources.
 - Instagram/auth-gated links save as `needs_auth` instead of dead failures.
+  Started.
 - Articles and notes become searchable.
 - Users can share logs for any failed extraction.
 

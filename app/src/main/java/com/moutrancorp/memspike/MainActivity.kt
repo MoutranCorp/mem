@@ -514,6 +514,19 @@ private class MemAppState(
         selectedMemory = null
     }
 
+    fun retryMemoryExtraction(memory: MemoryUi) {
+        val input = memory.openUrl
+        if (input.isNullOrBlank()) {
+            logOutput = "No source URL is available for ${memory.title}."
+            return
+        }
+        selectedTab = MainTab.Capture
+        captureText = input
+        showCapture = true
+        selectedMemory = null
+        extract(input)
+    }
+
     fun openMemory(memory: MemoryUi) {
         if (memory.localPlaybackPath != null) {
             logOutput = "In-app playback is reserved for downloaded media. Local player UI comes with the offline-save slice."
@@ -601,6 +614,7 @@ private class YtDlpExtractor(private val activity: Activity) {
                 authRequired = false,
                 error = "${t::class.java.simpleName}: ${t.message}",
                 ragText = null,
+                nextStep = null,
                 prettyText = "Extraction failed:\n${t::class.java.simpleName}: ${t.message}",
             )
         }
@@ -662,6 +676,7 @@ private data class ExtractionResult(
     val authRequired: Boolean,
     val error: String?,
     val ragText: String?,
+    val nextStep: String?,
     val prettyText: String,
 ) {
     fun toExtractedSourceData(input: String): ExtractedSourceData {
@@ -679,7 +694,7 @@ private data class ExtractionResult(
             durationSeconds = durationSeconds,
             authRequired = authRequired,
             error = error,
-            ragText = ragText,
+            ragText = ragText ?: nextStep,
             rawMetadataJson = prettyText,
         )
     }
@@ -708,6 +723,7 @@ private data class ExtractionResult(
                 authRequired = root.optBoolean("authRequired", false),
                 error = root.optString("error").takeIf { it.isNotBlank() },
                 ragText = candidate?.optString("ragText")?.takeIf { it.isNotBlank() },
+                nextStep = root.optString("nextStep").takeIf { it.isNotBlank() },
                 prettyText = pretty,
             )
         }
@@ -1047,7 +1063,10 @@ private data class MemoryUi(
     val processingState: String = "done",
     val authState: String = "none",
     val rawMetadataJson: String? = null,
-)
+) {
+    val needsAuth: Boolean
+        get() = authState == "needs_auth" || processingState == "needs_auth"
+}
 
 private data class CollectionUi(
     val id: String,
@@ -1058,7 +1077,8 @@ private data class CollectionUi(
 )
 
 private fun SourceEntity.toMemoryUi(thumbnailAsset: AssetEntity?): MemoryUi {
-    val typeLabel = sourceType.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+    val normalizedType = if (sourceType == "needs_auth") "link" else sourceType
+    val typeLabel = normalizedType.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
     return MemoryUi(
         id = id,
         title = title,
@@ -1073,7 +1093,7 @@ private fun SourceEntity.toMemoryUi(thumbnailAsset: AssetEntity?): MemoryUi {
                 else -> "Metadata is saved and ready for indexing."
             },
         time = savedAt.relativeTime(),
-        icon = sourceIcon(sourceType, processingState),
+        icon = sourceIcon(normalizedType, processingState),
         thumbnailUrl = thumbnailAsset?.remoteUrl ?: thumbnailUrl,
         durationLabel = durationSeconds?.durationLabel(),
         openUrl = originalUrl.takeUnless { sourceType == "note" || it.startsWith("mem-file://") },
@@ -1434,6 +1454,7 @@ private fun MemScaffold(state: MemAppState) {
                 memory = memory,
                 onDismiss = state::closeSourceDetail,
                 onOpenMemory = state::openMemory,
+                onRetryExtraction = state::retryMemoryExtraction,
                 onAddToPlaylist = state::addToPlaylist,
                 onTagForReview = state::tagForReview,
             )
@@ -1943,6 +1964,7 @@ private fun SourceDetailSheet(
     memory: MemoryUi,
     onDismiss: () -> Unit,
     onOpenMemory: (MemoryUi) -> Unit,
+    onRetryExtraction: (MemoryUi) -> Unit,
     onAddToPlaylist: (MemoryUi) -> Unit,
     onTagForReview: (MemoryUi) -> Unit,
 ) {
@@ -1992,6 +2014,10 @@ private fun SourceDetailSheet(
 
         if (memory.tags.isNotEmpty()) {
             TagRow(memory.tags)
+        }
+
+        if (memory.needsAuth) {
+            AuthRequiredPanel(memory = memory, onRetry = { onRetryExtraction(memory) })
         }
 
         SurfaceCard {
@@ -2081,6 +2107,37 @@ private fun SourceDetailSheet(
             Icon(Icons.Rounded.Tag, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
             Text("Tag for review")
+        }
+    }
+}
+
+@Composable
+private fun AuthRequiredPanel(memory: MemoryUi, onRetry: () -> Unit) {
+    SurfaceCard(
+        container = MemTokens.colors.warning.copy(alpha = 0.10f),
+        border = BorderStroke(1.dp, MemTokens.colors.warning.copy(alpha = 0.28f)),
+    ) {
+        Column(
+            modifier = Modifier.padding(MemTokens.spacing.md),
+            verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.ErrorOutline, contentDescription = null, tint = MemTokens.colors.warning, modifier = Modifier.size(22.dp))
+                Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
+                Text("Auth required", color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
+            }
+            SelectionContainer {
+                Text(memory.summary, color = MemTokens.colors.textSecondary, fontSize = 13.sp, lineHeight = 19.sp)
+            }
+            OutlinedButton(
+                onClick = onRetry,
+                modifier = Modifier.fillMaxWidth(),
+                shape = MemTokens.shapes.pill,
+            ) {
+                Icon(Icons.Rounded.RestartAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
+                Text("Retry public extraction")
+            }
         }
     }
 }

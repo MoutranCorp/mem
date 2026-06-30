@@ -50,6 +50,8 @@ model used by `mobile-agent`.
 - Images can be imported from the file picker or share sheet, copied into
   app-private storage, saved as durable image sources, and rendered locally in
   the library.
+- Auth-gated links are saved as first-class `needs_auth` sources with a clear
+  detail callout and retry-public-extraction action.
 
 The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and

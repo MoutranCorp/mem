@@ -57,17 +57,43 @@ def extract(url, files_dir, ffmpeg_path=""):
 
 
 def error_payload(url, started, exc, auth_required=False):
-    return {
+    message = str(exc)
+    payload = {
         "ok": False,
         "sourceUrl": url,
         "ytDlpVersion": yt_dlp.version.__version__,
         "durationMs": int((time.time() - started) * 1000),
         "errorType": exc.__class__.__name__,
-        "error": str(exc),
+        "error": message,
         "authRequired": auth_required,
         "nextStep": auth_next_step() if auth_required else None,
         "trace": traceback.format_exc(limit=4),
     }
+    if auth_required:
+        payload["ragCandidate"] = {
+            "type": "needs_auth",
+            "title": auth_title(url),
+            "descriptionPreview": auth_summary(message),
+            "webpageUrl": url,
+            "extractor": "auth_gate",
+            "extractorKey": "NeedsAuth",
+            "ragText": auth_summary(message),
+        }
+    return payload
+
+
+def auth_title(url):
+    host = url.split("//", 1)[-1].split("/", 1)[0] if url else "source"
+    host = host.replace("www.", "")
+    return f"Auth required: {host}"
+
+
+def auth_summary(message):
+    return (
+        "This source requires an authenticated session before Mem can extract "
+        "metadata or content. The URL has been saved for retry once explicit "
+        f"source auth is available. Extractor message: {text(message, limit=500)}"
+    )
 
 
 def article_fallback_payload(url, started, yt_dlp_error):
