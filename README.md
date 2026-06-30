@@ -41,6 +41,8 @@ model used by `mobile-agent`.
   author, and Open Graph image where available.
 - Article fallback also extracts bounded readable page text and stores it as a
   durable RAG text chunk for better search/retrieval.
+- Capture now saves non-URL text as a manual note, while shared text containing
+  a URL extracts the first URL and processes it through the link adapters.
 
 The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and
@@ -88,12 +90,13 @@ Immediate next steps:
 3. Expand source detail into full video/article/document layouts.
 4. Build collection detail screens and richer tag editing.
 5. Expand FTS indexing to transcript/caption chunks and richer ranking.
-6. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
+6. Add PDF/text file import.
+7. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
    libs and pass their paths to `yt-dlp` through `ffmpeg_location`.
-7. Move long downloads to user-initiated data transfer jobs and media processing
+8. Move long downloads to user-initiated data transfer jobs and media processing
    work to a foreground service with the `mediaProcessing` type.
-8. Add transcript/caption fetching behind an explicit rights confirmation.
-9. Add an embedding/index interface so every extracted record becomes a RAG
+9. Add transcript/caption fetching behind an explicit rights confirmation.
+10. Add an embedding/index interface so every extracted record becomes a RAG
    document with stable IDs, source URL, timestamp, title, tags, and transcript
    segments.
 

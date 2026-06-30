@@ -339,23 +339,46 @@ private class MemAppState(
     fun extract(url: String) {
         val trimmed = url.trim()
         if (trimmed.isEmpty()) {
-            logOutput = "Enter a URL first."
+            logOutput = "Enter a link or note first."
+            return
+        }
+
+        val urlCandidate = trimmed.firstUrlOrNull()
+        if (urlCandidate == null) {
+            saveManualNote(trimmed)
             return
         }
 
         isExtracting = true
-        logOutput = "Running packaged yt-dlp on-device...\n\n$trimmed"
+        logOutput = "Running packaged extraction on-device...\n\n$urlCandidate"
         scope.launch {
-            val queued = repository.createQueuedSource(trimmed)
+            val queued = repository.createQueuedSource(urlCandidate)
             repository.markExtracting(queued.sourceId, queued.jobId)
-            val result = extractor.extract(trimmed)
+            val result = extractor.extract(urlCandidate)
             repository.completeExtraction(
                 sourceId = queued.sourceId,
                 jobId = queued.jobId,
-                result = result.toExtractedSourceData(trimmed),
+                result = result.toExtractedSourceData(urlCandidate),
             )
             isExtracting = false
             logOutput = result.prettyText
+        }
+    }
+
+    private fun saveManualNote(note: String) {
+        isExtracting = true
+        logOutput = "Saving note locally...\n\n${note.take(600)}"
+        scope.launch {
+            val queued = repository.createQueuedSource(note)
+            repository.markExtracting(queued.sourceId, queued.jobId)
+            val result = note.toManualNoteData()
+            repository.completeExtraction(
+                sourceId = queued.sourceId,
+                jobId = queued.jobId,
+                result = result,
+            )
+            isExtracting = false
+            logOutput = result.rawMetadataJson
         }
     }
 
@@ -566,6 +589,49 @@ private data class ExtractionResult(
     }
 }
 
+private fun String.firstUrlOrNull(): String? {
+    val match = Regex("""https?://[^\s<>"']+|www\.[^\s<>"']+""", RegexOption.IGNORE_CASE)
+        .find(this)
+        ?.value
+        ?.trimEnd('.', ',', ')', ']', '}')
+        ?: return null
+    return if (match.startsWith("www.", ignoreCase = true)) "https://$match" else match
+}
+
+private fun String.toManualNoteData(): ExtractedSourceData {
+    val normalized = trim()
+    val title = normalized
+        .lineSequence()
+        .firstOrNull { it.isNotBlank() }
+        ?.trim()
+        ?.take(90)
+        ?: "Untitled note"
+    val raw = JSONObject()
+        .put("ok", true)
+        .put("sourceType", "note")
+        .put("extractor", "manual_note")
+        .put("title", title)
+        .put("textLength", normalized.length)
+        .put("textPreview", normalized.take(1200))
+        .toString(2)
+    return ExtractedSourceData(
+        ok = true,
+        canonicalUrl = canonicalize(normalized),
+        originalUrl = normalized,
+        sourceType = "note",
+        originDomain = null,
+        title = title,
+        author = "Manual note",
+        summary = normalized.take(1200),
+        thumbnailUrl = null,
+        durationSeconds = null,
+        authRequired = false,
+        error = null,
+        ragText = normalized,
+        rawMetadataJson = raw,
+    )
+}
+
 private data class IngestionJobUi(
     val id: String,
     val sourceId: String,
@@ -629,7 +695,7 @@ private fun SourceEntity.toMemoryUi(thumbnailAsset: AssetEntity?): MemoryUi {
         icon = sourceIcon(sourceType, processingState),
         thumbnailUrl = thumbnailAsset?.remoteUrl ?: thumbnailUrl,
         durationLabel = durationSeconds?.durationLabel(),
-        openUrl = originalUrl,
+        openUrl = if (sourceType == "note") null else originalUrl,
         localPlaybackPath = null,
         processingState = processingState,
         authState = authState,

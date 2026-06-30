@@ -105,13 +105,16 @@ HTML pages when yt-dlp cannot handle a URL. The fallback captures title,
 description, canonical URL, author, and Open Graph/Twitter image metadata where
 available. It also extracts bounded readable body text from public HTML and
 stores that text as a durable `rag_text` document chunk.
+Manual note capture now bypasses network extraction, saves non-URL text as a
+durable `note` source, and stores the note body as a `rag_text` chunk. Shared
+text containing a URL is normalized to the first URL before link extraction.
 
 Deliverables:
 
 - yt-dlp adapter for public video metadata and captions.
 - Article metadata/readability adapter. Started with metadata fallback and
   bounded readable body extraction.
-- Manual note adapter.
+- Manual note adapter. Started with direct text capture into durable notes.
 - PDF/text import adapter.
 - Image import plus OCR spike.
 - Voice note plus transcription spike.
