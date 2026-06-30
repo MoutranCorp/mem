@@ -103,6 +103,8 @@ Expected:
 - Quoted phrases remain searchable as meaningful terms.
 - Cited result cards expose rank signals for debugging keyword, semantic,
   recency, filter, provider/model, vector index, and hybrid behavior.
+- Nearby timestamped chunks from the same source and chunk type should collapse
+  to the strongest citation, with a rank signal showing the nearby-dedupe path.
 
 ### Visual Memory Placeholder
 

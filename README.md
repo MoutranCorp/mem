@@ -162,6 +162,9 @@ Immediate next steps:
    Source snapshots and citations now expose `contentDepth` and a derived
    content profile, so agents can distinguish transcript-ready, visual,
    metadata-only, auth-required, and unindexed memories before answering.
+   Fusion now dedupes nearby timestamped chunks from the same source/chunk type
+   so transcript searches cite the strongest moment instead of flooding results
+   with adjacent segments.
 6. Add the first agent search tool with cited results and action previews.
    Started with a local agent search panel that summarizes grounded citations
    and can draft a collection from the cited source set. Collection drafts now

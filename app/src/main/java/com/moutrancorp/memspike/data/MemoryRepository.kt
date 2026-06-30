@@ -36,6 +36,7 @@ private const val LOCAL_EMBEDDING_DIMENSIONS = 128
 private const val LOCAL_SEMANTIC_EXACT_SCAN_LIMIT = 10_000
 private const val FILTER_ONLY_SCAN_LIMIT = 10_000
 private const val SEARCH_RESULT_LIMIT = 40
+private const val NEARBY_TIMESTAMP_DEDUPE_WINDOW_MS = 30_000L
 
 class MemoryRepository(private val database: MemDatabase) {
     private val embeddingProvider: EmbeddingProvider = LocalHashEmbeddingProvider()
@@ -272,23 +273,27 @@ class MemoryRepository(private val database: MemDatabase) {
         (keyword + semantic)
             .filter { parsed.matches(it, filterContext) }
             .forEachIndexed { index, result ->
-            val existing = byChunk[result.chunkId]
+            val nearbyKey = byChunk.entries.firstOrNull { (_, existing) -> existing.isNearbyDuplicateOf(result) }?.key
+            val existing = byChunk[result.chunkId] ?: nearbyKey?.let { byChunk[it] }
             val sourceDedupePenalty = byChunk.values.count { it.sourceId == result.sourceId } * 0.03f
             val recencyBoost = 1.0f / (1 + index)
             val filterBoost = parsed.rankBoost(result, filterContext)
             val score = result.rankScore + recencyBoost + filterBoost - sourceDedupePenalty
+            val dedupeLabel = if (nearbyKey != null && nearbyKey != result.chunkId) "; nearbyDeduped=true; dedupeWindowMs=$NEARBY_TIMESTAMP_DEDUPE_WINDOW_MS" else ""
             val ranked = result.copy(
                 rankScore = score,
-                rankSignals = "mode=${result.retrievalMode}; base=${"%.2f".format(result.rankScore)}; recency=${"%.2f".format(recencyBoost)}; filters=${"%.2f".format(filterBoost)}",
+                rankSignals = "mode=${result.retrievalMode}; base=${"%.2f".format(result.rankScore)}; recency=${"%.2f".format(recencyBoost)}; filters=${"%.2f".format(filterBoost)}$dedupeLabel",
             )
             if (existing == null || score > existing.rankScore) {
+                if (nearbyKey != null && nearbyKey != result.chunkId) byChunk.remove(nearbyKey)
                 byChunk[result.chunkId] = ranked
             } else if (existing.retrievalMode != result.retrievalMode) {
-                byChunk[result.chunkId] = existing.copy(
+                val targetKey = nearbyKey ?: result.chunkId
+                byChunk[targetKey] = existing.copy(
                     retrievalMode = "hybrid",
                     matchReason = existing.matchReason.replace("Keyword", "Hybrid").replace("Semantic", "Hybrid"),
                     rankScore = existing.rankScore + 0.25f,
-                    rankSignals = existing.rankSignals + "; hybrid=true",
+                    rankSignals = existing.rankSignals + "; hybrid=true$dedupeLabel",
                 )
             }
         }
@@ -2251,6 +2256,15 @@ private fun SearchResultData.searchHaystack(): String {
         matchReason,
         retrievalMode,
     ).joinToString(" ").lowercase(Locale.US)
+}
+
+private fun SearchResultData.isNearbyDuplicateOf(other: SearchResultData): Boolean {
+    if (chunkId == other.chunkId) return true
+    if (sourceId != other.sourceId) return false
+    if (chunkType != other.chunkType) return false
+    val left = startTimeMs ?: return false
+    val right = other.startTimeMs ?: return false
+    return kotlin.math.abs(left - right) <= NEARBY_TIMESTAMP_DEDUPE_WINDOW_MS
 }
 
 private fun contentDepthForChunk(processingState: String, authState: String, chunkType: String): String {

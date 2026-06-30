@@ -108,6 +108,14 @@
       "text": "For a first Japan vacation, stay near the Yamanote line, plan Tokyo food stops, and keep transit cards ready."
     },
     {
+      "id": "chunk_tokyo_transit_near_duplicate",
+      "sourceId": "yt_japan_food_short",
+      "chunkType": "transcript",
+      "language": "en",
+      "startTimeMs": 56000,
+      "text": "Japan transit planning stays easier when you keep a card ready near the Yamanote line."
+    },
+    {
       "id": "chunk_kyoto_article",
       "sourceId": "article_kyoto_hotels",
       "chunkType": "article",
@@ -251,6 +259,16 @@
       "query": "help me build a Japan itinerary",
       "expectedAnySourceIds": ["yt_japan_food_short", "article_kyoto_hotels", "note_japan_itinerary"],
       "minResults": 3,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Nearby timestamp dedupe",
+      "query": "type:video has:transcript japan transit yamanote",
+      "expectedAnySourceIds": ["yt_japan_food_short"],
+      "requiredChunkTypes": ["transcript"],
+      "requiresTimestamp": true,
+      "maxResultsPerSourceChunkType": 1,
+      "requiresNearbyDedupeSignal": true,
       "requiresRankSignals": true
     },
     {

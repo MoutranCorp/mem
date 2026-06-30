@@ -323,8 +323,10 @@ Exit criteria:
    `EmbeddingProvider` and `VectorIndex` implementations instead of direct
    repository calls. Source snapshots and cited results now expose derived
    `contentDepth`/content-profile signals so tools can avoid overstating
-   metadata-only or unindexed memories. A production local/cloud embedding
-   provider and approximate vector index remain.
+   metadata-only or unindexed memories. Fusion now dedupes nearby timestamped
+   chunks from the same source/chunk type, matching the research path's
+   source/time dedupe requirement. A production local/cloud embedding provider
+   and approximate vector index remain.
 6. Implement the first agent tool set: search memory, get source/chunks, and
    draft collection/playlist actions with preview/undo. Started with
    search-generated collection drafts backed by `agent_actions`, preview,

@@ -19,6 +19,7 @@ DIMENSIONS = 128
 NOW = datetime(2026, 6, 30, tzinfo=timezone.utc)
 LOCAL_SEMANTIC_EXACT_SCAN_LIMIT = 10_000
 FILTER_ONLY_SCAN_LIMIT = 10_000
+NEARBY_TIMESTAMP_DEDUPE_WINDOW_MS = 30_000
 
 
 @dataclass(frozen=True)
@@ -530,19 +531,37 @@ def add_result(results: dict[str, Result], parsed: ParsedQuery, result: Result, 
     recency = 1.0 / (1 + index)
     filters = rank_boost(parsed, result)
     score = result.score + recency + filters - source_dupe_penalty
+    nearby_key = next((key for key, item in results.items() if is_nearby_duplicate(item.chunk, result.chunk)), None)
+    dedupe_label = f"; nearbyDeduped=true; dedupeWindowMs={NEARBY_TIMESTAMP_DEDUPE_WINDOW_MS}" if nearby_key and nearby_key != result.chunk.id else ""
     ranked = Result(
         chunk=result.chunk,
         retrieval_mode=result.retrieval_mode,
         score=score,
-        rank_signals=f"mode={result.retrieval_mode}; base={result.score:.2f}; recency={recency:.2f}; filters={filters:.2f}",
+        rank_signals=f"mode={result.retrieval_mode}; base={result.score:.2f}; recency={recency:.2f}; filters={filters:.2f}{dedupe_label}",
     )
-    existing = results.get(result.chunk.id)
+    existing = results.get(result.chunk.id) or (results.get(nearby_key) if nearby_key else None)
     if existing is None or ranked.score > existing.score:
+        if nearby_key and nearby_key != result.chunk.id:
+            results.pop(nearby_key, None)
         results[result.chunk.id] = ranked
     elif existing.retrieval_mode != ranked.retrieval_mode:
+        target_key = nearby_key or result.chunk.id
         existing.retrieval_mode = "hybrid"
         existing.score += 0.25
-        existing.rank_signals += "; hybrid=true"
+        existing.rank_signals += f"; hybrid=true{dedupe_label}"
+        results[target_key] = existing
+
+
+def is_nearby_duplicate(left: Chunk, right: Chunk) -> bool:
+    if left.id == right.id:
+        return True
+    if left.source_id != right.source_id:
+        return False
+    if left.chunk_type != right.chunk_type:
+        return False
+    if left.start_time_ms is None or right.start_time_ms is None:
+        return False
+    return abs(left.start_time_ms - right.start_time_ms) <= NEARBY_TIMESTAMP_DEDUPE_WINDOW_MS
 
 
 def load_fixture(path: Path) -> tuple[list[Chunk], dict[str, dict[str, Any]], dict[str, list[dict[str, Any]]], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -621,6 +640,17 @@ def check_expectations(query: dict[str, Any], results: list[Result]) -> list[str
         failures.append("timestamp hard filter leaked an untimestamped result")
     if query.get("requiresRankSignals") and any("mode=" not in result.rank_signals for result in results):
         failures.append("rank signals missing mode")
+    source_type_limit = query.get("maxResultsPerSourceChunkType")
+    if source_type_limit is not None:
+        counts: dict[tuple[str, str], int] = {}
+        for result in results:
+            key = (result.chunk.source_id, result.chunk.chunk_type)
+            counts[key] = counts.get(key, 0) + 1
+        leaked = [key for key, count in counts.items() if count > source_type_limit]
+        if leaked:
+            failures.append(f"nearby source/chunk-type dedupe leaked duplicates: {leaked}")
+    if query.get("requiresNearbyDedupeSignal") and not any("nearbyDeduped=true" in result.rank_signals for result in results):
+        failures.append("missing nearby dedupe rank signal")
     if len(results) < query.get("minResults", 1):
         failures.append(f"expected at least {query.get('minResults', 1)} results, got {len(results)}")
     return failures
