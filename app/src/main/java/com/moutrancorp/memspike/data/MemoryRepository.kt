@@ -1172,6 +1172,7 @@ data class SearchResultData(
     val durationSeconds: Long?,
     val snippet: String,
     val chunkType: String,
+    val language: String?,
     val matchReason: String,
     val startTimeMs: Long?,
     val endTimeMs: Long?,
@@ -1264,6 +1265,7 @@ private fun ChunkSearchResult.toSearchResultData(retrievalMode: String, rankScor
         durationSeconds = durationSeconds,
         snippet = body.take(360),
         chunkType = chunkType,
+        language = language,
         matchReason = reason,
         startTimeMs = startTimeMs,
         endTimeMs = endTimeMs,
@@ -1292,6 +1294,7 @@ private fun ChunkEmbeddingCandidate.toSearchResultData(score: Float): SearchResu
         durationSeconds = durationSeconds,
         snippet = body.take(360),
         chunkType = chunkType,
+        language = language,
         matchReason = reason,
         startTimeMs = startTimeMs,
         endTimeMs = endTimeMs,
@@ -1312,6 +1315,7 @@ private fun SearchResultData.toToolCitationJson(): JSONObject {
         .put("author", author)
         .put("snippet", snippet)
         .put("chunkType", chunkType)
+        .put("language", language)
         .put("matchReason", matchReason)
         .put("startTimeMs", startTimeMs)
         .put("endTimeMs", endTimeMs)
@@ -1543,6 +1547,8 @@ private data class ParsedSearchQuery(
     val statuses: Set<String>,
     val tagFilters: Set<String>,
     val collectionFilters: Set<String>,
+    val authorFilters: Set<String>,
+    val languageFilters: Set<String>,
     val requiredChunkTypes: Set<String>,
     val requiredCapabilities: Set<String>,
     val durationRanges: List<LongRange>,
@@ -1560,6 +1566,14 @@ private data class ParsedSearchQuery(
         if (statuses.isNotEmpty() && statuses.none { haystack.contains(it) }) return false
         filterContext.tagSourceIds?.let { if (result.sourceId !in it) return false }
         filterContext.collectionSourceIds?.let { if (result.sourceId !in it) return false }
+        if (authorFilters.isNotEmpty()) {
+            val author = result.author?.lowercase(Locale.US) ?: return false
+            if (authorFilters.none { author.contains(it) }) return false
+        }
+        if (languageFilters.isNotEmpty()) {
+            val language = result.language?.lowercase(Locale.US) ?: return false
+            if (language !in languageFilters) return false
+        }
         if (requiredChunkTypes.isNotEmpty() && result.chunkType.lowercase(Locale.US) !in requiredChunkTypes) return false
         if ("timestamp" in requiredCapabilities && result.startTimeMs == null) return false
         if (durationRanges.isNotEmpty()) {
@@ -1577,6 +1591,8 @@ private data class ParsedSearchQuery(
             statuses.isNotEmpty() ||
             tagFilters.isNotEmpty() ||
             collectionFilters.isNotEmpty() ||
+            authorFilters.isNotEmpty() ||
+            languageFilters.isNotEmpty() ||
             requiredChunkTypes.isNotEmpty() ||
             requiredCapabilities.isNotEmpty() ||
             durationRanges.isNotEmpty() ||
@@ -1594,6 +1610,8 @@ private data class ParsedSearchQuery(
         if (domains.any { result.originDomain?.lowercase(Locale.US)?.contains(it) == true }) boost += 0.25f
         if (filterContext.tagSourceIds?.contains(result.sourceId) == true) boost += 0.22f
         if (filterContext.collectionSourceIds?.contains(result.sourceId) == true) boost += 0.22f
+        if (authorFilters.any { result.author?.lowercase(Locale.US)?.contains(it) == true }) boost += 0.18f
+        if (languageFilters.contains(result.language?.lowercase(Locale.US))) boost += 0.18f
         if (durationRanges.isNotEmpty() && result.durationSeconds != null) boost += 0.18f
         if (savedRanges.isNotEmpty() || dateRanges.isNotEmpty()) boost += 0.12f
         if (result.startTimeMs != null) boost += 0.08f
@@ -1612,6 +1630,8 @@ private data class ParsedSearchQuery(
             .put("statuses", JSONArray(statuses.toList()))
             .put("tagFilters", JSONArray(tagFilters.toList()))
             .put("collectionFilters", JSONArray(collectionFilters.toList()))
+            .put("authorFilters", JSONArray(authorFilters.toList()))
+            .put("languageFilters", JSONArray(languageFilters.toList()))
             .put("tagFilterMatches", filterContext.tagSourceIds?.size ?: 0)
             .put("collectionFilterMatches", filterContext.collectionSourceIds?.size ?: 0)
             .put("requiredChunkTypes", JSONArray(requiredChunkTypes.toList()))
@@ -1637,6 +1657,8 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
     val statuses = mutableSetOf<String>()
     val tagFilters = mutableSetOf<String>()
     val collectionFilters = mutableSetOf<String>()
+    val authorFilters = mutableSetOf<String>()
+    val languageFilters = mutableSetOf<String>()
     val requiredChunkTypes = mutableSetOf<String>()
     val requiredCapabilities = mutableSetOf<String>()
     val durationRanges = mutableListOf<LongRange>()
@@ -1675,7 +1697,9 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
                     }
                     "tag" -> tagFilters.add(value)
                     "collection" -> collectionFilters.add(value)
-                    "author", "channel", "language", "action" -> softTerms.add(value)
+                    "author", "channel" -> authorFilters.add(value)
+                    "language" -> languageFilters.add(value)
+                    "action" -> softTerms.add(value)
                     "duration" -> parseDurationRange(value)?.let(durationRanges::add)
                     "saved" -> parseDateRange(value)?.let(savedRanges::add)
                     "date" -> parseDateRange(value)?.let(dateRanges::add)
@@ -1695,6 +1719,8 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
         statuses = statuses.filter { it.isNotBlank() }.toSet(),
         tagFilters = tagFilters.filter { it.isNotBlank() }.toSet(),
         collectionFilters = collectionFilters.filter { it.isNotBlank() }.toSet(),
+        authorFilters = authorFilters.filter { it.isNotBlank() }.toSet(),
+        languageFilters = languageFilters.filter { it.isNotBlank() }.toSet(),
         requiredChunkTypes = requiredChunkTypes,
         requiredCapabilities = requiredCapabilities,
         durationRanges = durationRanges,

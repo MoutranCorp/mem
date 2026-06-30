@@ -86,6 +86,7 @@
       "id": "chunk_distribution_transcript",
       "sourceId": "yt_founder_distribution",
       "chunkType": "transcript",
+      "language": "en",
       "startTimeMs": 93000,
       "text": "A founder can have a polished product, but distribution matters more than taste when the market is crowded."
     },
@@ -99,6 +100,7 @@
       "id": "chunk_tokyo_transit_transcript",
       "sourceId": "yt_japan_food_short",
       "chunkType": "transcript",
+      "language": "en",
       "startTimeMs": 42000,
       "text": "For a first Japan vacation, stay near the Yamanote line, plan Tokyo food stops, and keep transit cards ready."
     },
@@ -118,6 +120,7 @@
       "id": "chunk_pdf_agents",
       "sourceId": "pdf_ai_agents",
       "chunkType": "document",
+      "language": "en",
       "text": "AI agents need tool contracts, evaluation suites, action previews, and reversible operations for reliable automation."
     },
     {
@@ -137,6 +140,7 @@
       "id": "chunk_gameplay_transcript",
       "sourceId": "local_gameplay_visual",
       "chunkType": "transcript",
+      "language": "en",
       "startTimeMs": 17000,
       "text": "The commentator says the player misses the platform and everyone laughs during the match."
     },
@@ -206,6 +210,20 @@
       "query": "collection:japan trip planning",
       "expectedAnySourceIds": ["yt_japan_food_short", "article_kyoto_hotels", "note_japan_itinerary"],
       "minResults": 3,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Author hard filter",
+      "query": "author:travel japan transit",
+      "expectedTopSourceId": "yt_japan_food_short",
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Language hard filter",
+      "query": "language:en has:transcript",
+      "expectedAnySourceIds": ["yt_founder_distribution", "yt_japan_food_short", "local_gameplay_visual"],
+      "requiredChunkTypes": ["transcript"],
+      "requiresTimestamp": true,
       "requiresRankSignals": true
     },
     {

@@ -407,6 +407,7 @@ data class ChunkSearchResult(
     val durationSeconds: Long?,
     val body: String,
     val chunkType: String,
+    val language: String?,
     val startTimeMs: Long?,
     val endTimeMs: Long?,
     val savedAt: Long,
@@ -422,6 +423,7 @@ data class ChunkEmbeddingCandidate(
     val durationSeconds: Long?,
     val body: String,
     val chunkType: String,
+    val language: String?,
     val startTimeMs: Long?,
     val endTimeMs: Long?,
     val savedAt: Long,
@@ -552,7 +554,8 @@ interface ChunkSearchDao {
                sources.sourceType AS sourceType, sources.originDomain AS originDomain,
                sources.author AS author, sources.durationSeconds AS durationSeconds,
                chunk_search.body AS body,
-               document_chunks.chunkType AS chunkType, document_chunks.startTimeMs AS startTimeMs,
+               document_chunks.chunkType AS chunkType, document_chunks.language AS language,
+               document_chunks.startTimeMs AS startTimeMs,
                document_chunks.endTimeMs AS endTimeMs, sources.savedAt AS savedAt
         FROM chunk_search
         INNER JOIN sources ON sources.id = chunk_search.sourceId
@@ -570,7 +573,8 @@ interface ChunkSearchDao {
                sources.sourceType AS sourceType, sources.originDomain AS originDomain,
                sources.author AS author, sources.durationSeconds AS durationSeconds,
                chunk_search.body AS body,
-               document_chunks.chunkType AS chunkType, document_chunks.startTimeMs AS startTimeMs,
+               document_chunks.chunkType AS chunkType, document_chunks.language AS language,
+               document_chunks.startTimeMs AS startTimeMs,
                document_chunks.endTimeMs AS endTimeMs, sources.savedAt AS savedAt
         FROM chunk_search
         INNER JOIN sources ON sources.id = chunk_search.sourceId
@@ -624,7 +628,8 @@ interface ChunkEmbeddingDao {
                sources.sourceType AS sourceType, sources.originDomain AS originDomain,
                sources.author AS author, sources.durationSeconds AS durationSeconds,
                document_chunks.text AS body,
-               document_chunks.chunkType AS chunkType, document_chunks.startTimeMs AS startTimeMs,
+               document_chunks.chunkType AS chunkType, document_chunks.language AS language,
+               document_chunks.startTimeMs AS startTimeMs,
                document_chunks.endTimeMs AS endTimeMs, sources.savedAt AS savedAt,
                chunk_embeddings.dimensions AS dimensions, chunk_embeddings.vector AS vector
         FROM chunk_embeddings

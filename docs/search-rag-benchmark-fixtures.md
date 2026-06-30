@@ -81,6 +81,8 @@ Queries:
 - `date:2026-06 has:timestamp`
 - `tag:travel japan`
 - `collection:japan trip planning`
+- `author:travel japan transit`
+- `language:en has:transcript`
 - `"exact phrase" -ignored`
 
 Expected:
@@ -90,6 +92,8 @@ Expected:
   the cited result set when a hard filter is present.
 - Tag and collection filters should be enforced from membership tables, not
   treated as ordinary text hints.
+- Author/channel and language filters should remove nonmatching authors and
+  chunks without the requested language.
 - Quoted phrases remain searchable as meaningful terms.
 - Cited result cards expose rank signals for debugging keyword, semantic,
   recency, filter, and hybrid behavior.
