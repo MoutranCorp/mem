@@ -685,8 +685,14 @@ interface TagDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(tag: TagEntity)
 
+    @Query("SELECT * FROM source_tags WHERE sourceId = :sourceId AND tagId = :tagId LIMIT 1")
+    suspend fun findSourceTag(sourceId: String, tagId: String): SourceTagEntity?
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertSourceTag(sourceTag: SourceTagEntity)
+
+    @Query("DELETE FROM source_tags WHERE sourceId = :sourceId AND tagId = :tagId")
+    suspend fun deleteSourceTag(sourceId: String, tagId: String)
 }
 
 @Dao

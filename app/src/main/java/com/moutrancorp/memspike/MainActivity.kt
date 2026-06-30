@@ -623,7 +623,10 @@ private class MemAppState(
     fun confirmAgentAction() {
         val action = pendingAgentAction ?: return
         scope.launch {
-            val applied = repository.applyCollectionDraft(action.id)
+            val applied = when (action.actionType) {
+                "tag_sources" -> repository.applyTagDraft(action.id)
+                else -> repository.applyCollectionDraft(action.id)
+            }
             pendingAgentAction = applied?.toAgentActionUi()
             logOutput = if (applied?.state == "applied") {
                 "Applied ${applied.title}. Undo is available from the preview."
@@ -636,7 +639,10 @@ private class MemAppState(
     fun undoAgentAction() {
         val action = pendingAgentAction ?: return
         scope.launch {
-            val undone = repository.undoCollectionDraft(action.id)
+            val undone = when (action.actionType) {
+                "tag_sources" -> repository.undoTagDraft(action.id)
+                else -> repository.undoCollectionDraft(action.id)
+            }
             pendingAgentAction = undone?.toAgentActionUi()
             logOutput = if (undone?.state == "undone") {
                 "Undid ${undone.title}."
@@ -652,8 +658,13 @@ private class MemAppState(
 
     fun tagForReview(memory: MemoryUi) {
         scope.launch {
-            repository.tagSource(memory.id)
-            logOutput = "Tagged ${memory.title} for review."
+            val draft = repository.createTagDraft(
+                sourceIds = listOf(memory.id),
+                tagNames = listOf("review"),
+                rationale = "Tag this memory for later review.",
+            )
+            pendingAgentAction = draft.toAgentActionUi()
+            logOutput = "Prepared tag draft for ${memory.title}."
         }
     }
 

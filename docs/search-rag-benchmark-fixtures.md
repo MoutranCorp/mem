@@ -127,6 +127,7 @@ Expected:
 - Applying the action writes collection memberships.
 - Undo removes the memberships added by that action.
 - The action remains auditable in `agent_actions`.
+- `tag_sources` creates the same kind of approval-gated draft for source tags.
 
 ## Manual Smoke Test
 

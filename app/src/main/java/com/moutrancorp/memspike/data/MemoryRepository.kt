@@ -32,7 +32,7 @@ private const val SEARCH_RESULT_LIMIT = 40
 
 class MemoryRepository(private val database: MemDatabase) {
     fun availableMemoryTools(): List<String> {
-        return listOf("search_memory", "get_source_context", "summarize_source", "draft_collection")
+        return listOf("search_memory", "get_source_context", "summarize_source", "draft_collection", "tag_sources")
     }
 
     suspend fun runMemoryTool(call: AgentToolCall): AgentToolResult {
@@ -42,6 +42,7 @@ class MemoryRepository(private val database: MemDatabase) {
             "get_source_context" -> runGetSourceContextTool(args)
             "summarize_source" -> runSummarizeSourceTool(args)
             "draft_collection" -> runDraftCollectionTool(args)
+            "tag_sources" -> runTagSourcesTool(args)
             else -> JSONObject()
                 .put("ok", false)
                 .put("error", "Unknown memory tool: ${call.name}")
@@ -505,6 +506,79 @@ class MemoryRepository(private val database: MemDatabase) {
         return undone.toDraft()
     }
 
+    suspend fun createTagDraft(sourceIds: List<String>, tagNames: List<String>, rationale: String): AgentActionDraft {
+        val distinctIds = sourceIds.distinct()
+        val normalizedTags = tagNames.mapNotNull { it.trim().lowercase(Locale.US).takeIf(String::isNotBlank) }.distinct()
+        val preview = JSONObject()
+            .put("sourceIds", JSONArray(distinctIds))
+            .put("tags", JSONArray(normalizedTags))
+            .put("sourceCount", distinctIds.size)
+            .toString()
+        val action = AgentActionEntity(
+            id = UUID.randomUUID().toString(),
+            actionType = "tag_sources",
+            state = "draft",
+            title = "Tag ${distinctIds.size} source${if (distinctIds.size == 1) "" else "s"}",
+            rationale = rationale,
+            previewJson = preview,
+            undoPayloadJson = null,
+            createdAt = System.currentTimeMillis(),
+            appliedAt = null,
+            undoneAt = null,
+        )
+        database.agentActionDao().upsert(action)
+        return action.toDraft()
+    }
+
+    suspend fun applyTagDraft(actionId: String): AgentActionDraft? {
+        val action = database.agentActionDao().findById(actionId) ?: return null
+        if (action.state != "draft") return action.toDraft()
+        val preview = JSONObject(action.previewJson)
+        val sourceIds = preview.optJSONArray("sourceIds").orEmptyStrings()
+        val tagNames = preview.optJSONArray("tags").orEmptyStrings()
+        val createdMemberships = JSONArray()
+        sourceIds.forEach { sourceId ->
+            tagNames.forEach { tagName ->
+                val tag = ensureTag(tagName)
+                val existed = database.tagDao().findSourceTag(sourceId, tag.id) != null
+                database.tagDao().insertSourceTag(
+                    SourceTagEntity(sourceId = sourceId, tagId = tag.id, createdAt = System.currentTimeMillis()),
+                )
+                if (!existed) createdMemberships.put(JSONObject().put("sourceId", sourceId).put("tagId", tag.id))
+            }
+            database.sourceDao().findById(sourceId)?.let { indexSource(it, null) }
+        }
+        val applied = action.copy(
+            state = "applied",
+            undoPayloadJson = JSONObject().put("createdMemberships", createdMemberships).toString(),
+            appliedAt = System.currentTimeMillis(),
+        )
+        database.agentActionDao().upsert(applied)
+        return applied.toDraft()
+    }
+
+    suspend fun undoTagDraft(actionId: String): AgentActionDraft? {
+        val action = database.agentActionDao().findById(actionId) ?: return null
+        if (action.state != "applied" || action.undoPayloadJson.isNullOrBlank()) return action.toDraft()
+        val createdMemberships = JSONObject(action.undoPayloadJson).optJSONArray("createdMemberships")
+        val reindexSourceIds = mutableSetOf<String>()
+        if (createdMemberships != null) {
+            for (index in 0 until createdMemberships.length()) {
+                val membership = createdMemberships.optJSONObject(index) ?: continue
+                val sourceId = membership.optString("sourceId")
+                val tagId = membership.optString("tagId")
+                if (sourceId.isNotBlank() && tagId.isNotBlank()) {
+                    database.tagDao().deleteSourceTag(sourceId, tagId)
+                    reindexSourceIds.add(sourceId)
+                }
+            }
+        }
+        reindexSourceIds.forEach { sourceId -> database.sourceDao().findById(sourceId)?.let { indexSource(it, null) } }
+        val undone = action.copy(state = "undone", undoneAt = System.currentTimeMillis())
+        database.agentActionDao().upsert(undone)
+        return undone.toDraft()
+    }
+
     private suspend fun runSearchMemoryTool(args: JSONObject): JSONObject {
         val query = args.optString("query").trim()
         val limit = args.optInt("limit", 8).coerceIn(1, 20)
@@ -567,6 +641,29 @@ class MemoryRepository(private val database: MemDatabase) {
         return JSONObject()
             .put("ok", true)
             .put("tool", "draft_collection")
+            .put("actionId", draft.id)
+            .put("state", draft.state)
+            .put("title", draft.title)
+            .put("sourceCount", draft.sourceCount)
+            .put("requiresApproval", true)
+    }
+
+    private suspend fun runTagSourcesTool(args: JSONObject): JSONObject {
+        val sourceIds = args.optJSONArray("sourceIds").orEmptyStrings()
+        val tags = args.optJSONArray("tags").orEmptyStrings().ifEmpty {
+            args.optString("tag").takeIf { it.isNotBlank() }?.let(::listOf).orEmpty()
+        }
+        val rationale = args.optString("rationale").takeIf { it.isNotBlank() }
+            ?: "Drafted from agent-selected memory sources."
+        if (sourceIds.isEmpty() || tags.isEmpty()) {
+            return JSONObject()
+                .put("ok", false)
+                .put("error", "sourceIds and tags are required")
+        }
+        val draft = createTagDraft(sourceIds = sourceIds, tagNames = tags, rationale = rationale)
+        return JSONObject()
+            .put("ok", true)
+            .put("tool", "tag_sources")
             .put("actionId", draft.id)
             .put("state", draft.state)
             .put("title", draft.title)
@@ -934,15 +1031,21 @@ class MemoryRepository(private val database: MemDatabase) {
             .filter { it.isNotBlank() }
             .distinct()
             .forEach { name ->
-                val tag = database.tagDao().findByName(name) ?: TagEntity(
-                    id = stableId("tag:$name"),
-                    name = name,
-                    colorKey = null,
-                    createdAt = now,
-                )
-                database.tagDao().upsert(tag)
+                val tag = ensureTag(name)
                 database.tagDao().insertSourceTag(SourceTagEntity(sourceId = sourceId, tagId = tag.id, createdAt = now))
             }
+    }
+
+    private suspend fun ensureTag(name: String): TagEntity {
+        val normalized = name.trim().lowercase(Locale.US)
+        val tag = database.tagDao().findByName(normalized) ?: TagEntity(
+            id = stableId("tag:$normalized"),
+            name = normalized,
+            colorKey = null,
+            createdAt = System.currentTimeMillis(),
+        )
+        database.tagDao().upsert(tag)
+        return tag
     }
 }
 
