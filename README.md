@@ -24,6 +24,8 @@ model used by `mobile-agent`.
 - Auth-required and failed extractions stay visible in Inbox with logs.
 - Library search is backed by a Room FTS index.
 - Inbox supports retry and cancel actions for durable jobs.
+- Durable tag, collection, and collection membership tables.
+- Library feed can add a source to `Saved playlist` and tag it for review.
 
 The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and
@@ -66,14 +68,15 @@ The production direction is documented in:
 
 Immediate next steps:
 
-1. Add Asset, Tag, and Collection tables.
-2. Expand FTS indexing to transcript/caption chunks and richer ranking.
-3. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
+1. Add Asset table and thumbnail/file persistence.
+2. Build collection detail screens and richer tag editing.
+3. Expand FTS indexing to transcript/caption chunks and richer ranking.
+4. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
    libs and pass their paths to `yt-dlp` through `ffmpeg_location`.
-4. Move long downloads to user-initiated data transfer jobs and media processing
+5. Move long downloads to user-initiated data transfer jobs and media processing
    work to a foreground service with the `mediaProcessing` type.
-5. Add transcript/caption fetching behind an explicit rights confirmation.
-6. Add an embedding/index interface so every extracted record becomes a RAG
+6. Add transcript/caption fetching behind an explicit rights confirmation.
+7. Add an embedding/index interface so every extracted record becomes a RAG
    document with stable IDs, source URL, timestamp, title, tags, and transcript
    segments.
 

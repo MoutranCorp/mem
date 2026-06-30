@@ -14,8 +14,8 @@ android {
         applicationId "com.moutrancorp.memspike"
         minSdk 24
         targetSdk 35
-        versionCode 5
-        versionName "0.3.1-search-jobs"
+        versionCode 6
+        versionName "0.3.2-organization"
 
         ndk {
             abiFilters "arm64-v8a"

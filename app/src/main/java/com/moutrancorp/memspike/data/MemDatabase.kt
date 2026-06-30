@@ -108,6 +108,89 @@ data class SourceSearchEntity(
     val tags: String,
 )
 
+@Entity(
+    tableName = "tags",
+    indices = [Index(value = ["name"], unique = true)],
+)
+data class TagEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val colorKey: String?,
+    val createdAt: Long,
+)
+
+@Entity(
+    tableName = "source_tags",
+    primaryKeys = ["sourceId", "tagId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = SourceEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sourceId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
+            entity = TagEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["tagId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["sourceId"]), Index(value = ["tagId"])],
+)
+data class SourceTagEntity(
+    val sourceId: String,
+    val tagId: String,
+    val createdAt: Long,
+)
+
+@Entity(
+    tableName = "collections",
+    indices = [Index(value = ["title"])],
+)
+data class CollectionEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val type: String,
+    val filterJson: String?,
+    val createdBy: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
+@Entity(
+    tableName = "collection_sources",
+    primaryKeys = ["collectionId", "sourceId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = CollectionEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["collectionId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
+            entity = SourceEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sourceId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["collectionId"]), Index(value = ["sourceId"])],
+)
+data class CollectionSourceEntity(
+    val collectionId: String,
+    val sourceId: String,
+    val addedAt: Long,
+)
+
+data class CollectionSummary(
+    val id: String,
+    val title: String,
+    val type: String,
+    val itemCount: Int,
+    val updatedAt: Long,
+)
+
 @Dao
 interface SourceDao {
     @Query("SELECT * FROM sources ORDER BY savedAt DESC")
@@ -166,14 +249,56 @@ interface SourceSearchDao {
     suspend fun insert(entity: SourceSearchEntity)
 }
 
+@Dao
+interface TagDao {
+    @Query("SELECT tags.* FROM tags INNER JOIN source_tags ON tags.id = source_tags.tagId WHERE source_tags.sourceId = :sourceId ORDER BY tags.name")
+    suspend fun tagsForSource(sourceId: String): List<TagEntity>
+
+    @Query("SELECT * FROM tags WHERE name = :name LIMIT 1")
+    suspend fun findByName(name: String): TagEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(tag: TagEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertSourceTag(sourceTag: SourceTagEntity)
+}
+
+@Dao
+interface CollectionDao {
+    @Query(
+        """
+        SELECT collections.id, collections.title, collections.type, COUNT(collection_sources.sourceId) AS itemCount, collections.updatedAt
+        FROM collections
+        LEFT JOIN collection_sources ON collections.id = collection_sources.collectionId
+        GROUP BY collections.id
+        ORDER BY collections.updatedAt DESC
+        """,
+    )
+    fun observeCollectionSummaries(): Flow<List<CollectionSummary>>
+
+    @Query("SELECT * FROM collections WHERE title = :title LIMIT 1")
+    suspend fun findByTitle(title: String): CollectionEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(collection: CollectionEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertCollectionSource(collectionSource: CollectionSourceEntity)
+}
+
 @Database(
     entities = [
         SourceEntity::class,
         IngestionJobEntity::class,
         DocumentChunkEntity::class,
         SourceSearchEntity::class,
+        TagEntity::class,
+        SourceTagEntity::class,
+        CollectionEntity::class,
+        CollectionSourceEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class MemDatabase : RoomDatabase() {
@@ -181,6 +306,8 @@ abstract class MemDatabase : RoomDatabase() {
     abstract fun ingestionJobDao(): IngestionJobDao
     abstract fun documentChunkDao(): DocumentChunkDao
     abstract fun sourceSearchDao(): SourceSearchDao
+    abstract fun tagDao(): TagDao
+    abstract fun collectionDao(): CollectionDao
 
     companion object {
         @Volatile private var instance: MemDatabase? = null
@@ -208,6 +335,70 @@ abstract class MemDatabase : RoomDatabase() {
             }
         }
 
+        private val migration2To3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                createOrganizationTables(db)
+            }
+        }
+
+        private fun createOrganizationTables(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `tags` (
+                    `id` TEXT NOT NULL,
+                    `name` TEXT NOT NULL,
+                    `colorKey` TEXT,
+                    `createdAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_tags_name` ON `tags` (`name`)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `source_tags` (
+                    `sourceId` TEXT NOT NULL,
+                    `tagId` TEXT NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`sourceId`, `tagId`),
+                    FOREIGN KEY(`sourceId`) REFERENCES `sources`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(`tagId`) REFERENCES `tags`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_source_tags_sourceId` ON `source_tags` (`sourceId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_source_tags_tagId` ON `source_tags` (`tagId`)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `collections` (
+                    `id` TEXT NOT NULL,
+                    `title` TEXT NOT NULL,
+                    `type` TEXT NOT NULL,
+                    `filterJson` TEXT,
+                    `createdBy` TEXT NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    `updatedAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_collections_title` ON `collections` (`title`)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `collection_sources` (
+                    `collectionId` TEXT NOT NULL,
+                    `sourceId` TEXT NOT NULL,
+                    `addedAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`collectionId`, `sourceId`),
+                    FOREIGN KEY(`collectionId`) REFERENCES `collections`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(`sourceId`) REFERENCES `sources`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_collection_sources_collectionId` ON `collection_sources` (`collectionId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_collection_sources_sourceId` ON `collection_sources` (`sourceId`)")
+        }
+
         fun get(context: Context): MemDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
@@ -215,7 +406,7 @@ abstract class MemDatabase : RoomDatabase() {
                     MemDatabase::class.java,
                     "mem.db",
                 )
-                    .addMigrations(migration1To2)
+                    .addMigrations(migration1To2, migration2To3)
                     .build()
                     .also { instance = it }
             }

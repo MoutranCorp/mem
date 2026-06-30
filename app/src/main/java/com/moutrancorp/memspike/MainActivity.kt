@@ -119,6 +119,7 @@ import androidx.compose.ui.unit.sp
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import com.moutrancorp.memspike.data.CollectionSummary
 import com.moutrancorp.memspike.data.ExtractedSourceData
 import com.moutrancorp.memspike.data.IngestionJobEntity
 import com.moutrancorp.memspike.data.MemDatabase
@@ -286,6 +287,7 @@ private class MemAppState(
 
     val jobs = mutableStateListOf<IngestionJobUi>()
     val memories = mutableStateListOf<MemoryUi>()
+    val collections = mutableStateListOf<CollectionUi>()
 
     init {
         scope.launch {
@@ -369,6 +371,20 @@ private class MemAppState(
         }
     }
 
+    fun addToPlaylist(memory: MemoryUi) {
+        scope.launch {
+            repository.addSourceToCollection(memory.id)
+            logOutput = "Added ${memory.title} to Saved playlist."
+        }
+    }
+
+    fun tagForReview(memory: MemoryUi) {
+        scope.launch {
+            repository.tagSource(memory.id)
+            logOutput = "Tagged ${memory.title} for review."
+        }
+    }
+
     private fun applyMemoryState(state: MemoryState) {
         val sourceById = state.sources.associateBy { it.id }
         memories.clear()
@@ -383,6 +399,8 @@ private class MemAppState(
                 state.jobs.map { it.toJobUi(sourceById[it.sourceId]) }
             },
         )
+        collections.clear()
+        collections.addAll(state.collections.map { it.toCollectionUi() })
     }
 
     fun copyLog() {
@@ -521,6 +539,7 @@ private data class IngestionJobUi(
 }
 
 private data class MemoryUi(
+    val id: String,
     val title: String,
     val source: String,
     val type: String,
@@ -530,9 +549,18 @@ private data class MemoryUi(
     val tags: List<String>,
 )
 
+private data class CollectionUi(
+    val id: String,
+    val title: String,
+    val type: String,
+    val itemCount: Int,
+    val updatedAt: Long,
+)
+
 private fun SourceEntity.toMemoryUi(): MemoryUi {
     val typeLabel = sourceType.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
     return MemoryUi(
+        id = id,
         title = title,
         source = originDomain ?: author ?: "Saved source",
         type = typeLabel,
@@ -550,6 +578,16 @@ private fun SourceEntity.toMemoryUi(): MemoryUi {
             if (authState == "needs_auth") add("needs auth")
             originDomain?.let { add(it) }
         }.take(3),
+    )
+}
+
+private fun CollectionSummary.toCollectionUi(): CollectionUi {
+    return CollectionUi(
+        id = id,
+        title = title,
+        type = type,
+        itemCount = itemCount,
+        updatedAt = updatedAt,
     )
 }
 
@@ -984,6 +1022,10 @@ private fun LibraryScreen(state: MemAppState) {
             subtitle = "Everything you have saved",
             onAppearance = { state.showAppearance = true },
         )
+        if (state.collections.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(MemTokens.spacing.md))
+            CollectionStrip(state.collections)
+        }
         Spacer(modifier = Modifier.height(MemTokens.spacing.md))
         ModeSegmentedControl(
             selected = state.appearance.libraryMode,
@@ -1004,7 +1046,11 @@ private fun LibraryScreen(state: MemAppState) {
             Spacer(modifier = Modifier.height(MemTokens.spacing.sm))
         }
         when (state.appearance.libraryMode) {
-            LibraryMode.Feed -> LibraryFeed(state.memories)
+            LibraryMode.Feed -> LibraryFeed(
+                memories = state.memories,
+                onAddToPlaylist = state::addToPlaylist,
+                onTagForReview = state::tagForReview,
+            )
             LibraryMode.Grid -> LibraryGrid(state.memories)
             LibraryMode.Timeline -> LibraryTimeline(state.memories)
         }
@@ -1443,13 +1489,39 @@ private fun SmallActionButton(label: String, icon: ImageVector, onClick: () -> U
 
 
 @Composable
-private fun LibraryFeed(memories: List<MemoryUi>) {
+private fun CollectionStrip(collections: List<CollectionUi>) {
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
+        items(collections, key = { it.id }) { collection ->
+            SurfaceCard(modifier = Modifier.width(168.dp)) {
+                Column(
+                    modifier = Modifier.padding(MemTokens.spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs),
+                ) {
+                    IconBadge(Icons.Rounded.Bookmarks, MemTokens.colors.accentMuted, MemTokens.colors.accent)
+                    Text(collection.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    Text("${collection.itemCount} item${if (collection.itemCount == 1) "" else "s"}", color = MemTokens.colors.textSecondary, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LibraryFeed(
+    memories: List<MemoryUi>,
+    onAddToPlaylist: (MemoryUi) -> Unit,
+    onTagForReview: (MemoryUi) -> Unit,
+) {
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
         contentPadding = PaddingValues(bottom = 148.dp),
     ) {
         items(memories) { memory ->
-            FeedItem(memory)
+            FeedItem(
+                memory = memory,
+                onAddToPlaylist = onAddToPlaylist,
+                onTagForReview = onTagForReview,
+            )
         }
     }
 }
@@ -1481,7 +1553,11 @@ private fun LibraryTimeline(memories: List<MemoryUi>) {
 }
 
 @Composable
-private fun FeedItem(memory: MemoryUi) {
+private fun FeedItem(
+    memory: MemoryUi,
+    onAddToPlaylist: (MemoryUi) -> Unit,
+    onTagForReview: (MemoryUi) -> Unit,
+) {
     SurfaceCard {
         Column(modifier = Modifier.padding(MemTokens.spacing.md), verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1498,8 +1574,8 @@ private fun FeedItem(memory: MemoryUi) {
             DividerLine()
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 InlineAction("Ask", Icons.Rounded.AutoAwesome)
-                InlineAction("Playlist", Icons.Rounded.Bookmarks)
-                InlineAction("Tag", Icons.Rounded.Tag)
+                InlineAction("Playlist", Icons.Rounded.Bookmarks) { onAddToPlaylist(memory) }
+                InlineAction("Tag", Icons.Rounded.Tag) { onTagForReview(memory) }
                 InlineAction("Archive", Icons.Rounded.Archive)
             }
         }
@@ -1738,8 +1814,14 @@ private fun TagRow(tags: List<String>) {
 }
 
 @Composable
-private fun InlineAction(label: String, icon: ImageVector) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+private fun InlineAction(label: String, icon: ImageVector, onClick: () -> Unit = {}) {
+    Row(
+        modifier = Modifier
+            .clip(MemTokens.shapes.pill)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 4.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Icon(icon, contentDescription = null, tint = MemTokens.colors.accent, modifier = Modifier.size(18.dp))
         Spacer(modifier = Modifier.width(4.dp))
         Text(label, color = MemTokens.colors.textSecondary, fontSize = 12.sp)
@@ -1764,6 +1846,7 @@ private fun sampleJobs() = listOf(
 
 private fun sampleMemories() = listOf(
     MemoryUi(
+        "sample-memory-1",
         "How to Build Habits That Stick",
         "YouTube",
         "Video",
@@ -1773,6 +1856,7 @@ private fun sampleMemories() = listOf(
         listOf("habits", "productivity", "mindset"),
     ),
     MemoryUi(
+        "sample-memory-2",
         "The Philosophy of Solaris",
         "Article",
         "Article",
@@ -1782,6 +1866,7 @@ private fun sampleMemories() = listOf(
         listOf("philosophy", "science fiction"),
     ),
     MemoryUi(
+        "sample-memory-3",
         "Weekly Reflections - May 12",
         "Note",
         "Note",
@@ -1791,6 +1876,7 @@ private fun sampleMemories() = listOf(
         listOf("reflection", "goals"),
     ),
     MemoryUi(
+        "sample-memory-4",
         "Travel Inspiration - Portugal",
         "Screenshot",
         "Image",
@@ -1800,6 +1886,7 @@ private fun sampleMemories() = listOf(
         listOf("travel", "portugal"),
     ),
     MemoryUi(
+        "sample-memory-5",
         "Interview Insight - Design Thinking",
         "Voice",
         "Audio",

@@ -27,8 +27,9 @@ class MemoryRepository(private val database: MemDatabase) {
         return combine(
             sourceFlow,
             database.ingestionJobDao().observeJobs(),
-        ) { sources, jobs ->
-            MemoryState(sources = sources, jobs = jobs)
+            database.collectionDao().observeCollectionSummaries(),
+        ) { sources, jobs, collections ->
+            MemoryState(sources = sources, jobs = jobs, collections = collections)
         }
     }
 
@@ -69,6 +70,7 @@ class MemoryRepository(private val database: MemDatabase) {
         )
         database.sourceDao().upsert(source)
         database.ingestionJobDao().upsert(job)
+        ensureTags(source.id, listOfNotNull("link", source.originDomain, "queued"))
         indexSource(source, null)
         return QueuedSource(sourceId = sourceId, jobId = job.id)
     }
@@ -122,6 +124,15 @@ class MemoryRepository(private val database: MemDatabase) {
             rawMetadataJson = result.rawMetadataJson,
         )
         database.sourceDao().upsert(source)
+        ensureTags(
+            source.id,
+            listOfNotNull(
+                source.sourceType,
+                source.originDomain,
+                source.processingState,
+                if (source.authState == "needs_auth") "needs auth" else null,
+            ),
+        )
         indexSource(source, result.summary)
         database.ingestionJobDao().upsert(
             IngestionJobEntity(
@@ -181,8 +192,38 @@ class MemoryRepository(private val database: MemDatabase) {
         return source.originalUrl
     }
 
+    suspend fun addSourceToCollection(sourceId: String, title: String = "Saved playlist") {
+        val source = database.sourceDao().findById(sourceId) ?: return
+        val now = System.currentTimeMillis()
+        val existing = database.collectionDao().findByTitle(title)
+        val collection = existing ?: CollectionEntity(
+            id = stableId("collection:$title"),
+            title = title,
+            type = "playlist",
+            filterJson = null,
+            createdBy = "user",
+            createdAt = now,
+            updatedAt = now,
+        )
+        database.collectionDao().upsert(collection.copy(updatedAt = now))
+        database.collectionDao().insertCollectionSource(
+            CollectionSourceEntity(
+                collectionId = collection.id,
+                sourceId = source.id,
+                addedAt = now,
+            ),
+        )
+    }
+
+    suspend fun tagSource(sourceId: String, tagName: String = "review") {
+        ensureTags(sourceId, listOf(tagName))
+        val source = database.sourceDao().findById(sourceId) ?: return
+        indexSource(source, null)
+    }
+
     private suspend fun indexSource(source: SourceEntity, extractedText: String?) {
-        val tags = listOf(source.processingState, source.sourceType, source.authState, source.originDomain)
+        val durableTags = database.tagDao().tagsForSource(source.id).map { it.name }
+        val tags = (listOf(source.processingState, source.sourceType, source.authState, source.originDomain) + durableTags)
             .filterNotNull()
             .joinToString(" ")
         val body = listOfNotNull(
@@ -202,11 +243,30 @@ class MemoryRepository(private val database: MemDatabase) {
             ),
         )
     }
+
+    private suspend fun ensureTags(sourceId: String, names: List<String>) {
+        val now = System.currentTimeMillis()
+        names
+            .map { it.trim().lowercase(Locale.US) }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .forEach { name ->
+                val tag = database.tagDao().findByName(name) ?: TagEntity(
+                    id = stableId("tag:$name"),
+                    name = name,
+                    colorKey = null,
+                    createdAt = now,
+                )
+                database.tagDao().upsert(tag)
+                database.tagDao().insertSourceTag(SourceTagEntity(sourceId = sourceId, tagId = tag.id, createdAt = now))
+            }
+    }
 }
 
 data class MemoryState(
     val sources: List<SourceEntity>,
     val jobs: List<IngestionJobEntity>,
+    val collections: List<CollectionSummary>,
 )
 
 data class QueuedSource(
@@ -247,7 +307,11 @@ fun originDomain(input: String): String? {
 }
 
 private fun stableSourceId(canonicalUrl: String): String {
-    val digest = MessageDigest.getInstance("SHA-256").digest(canonicalUrl.toByteArray())
+    return stableId("source:$canonicalUrl").take(32)
+}
+
+private fun stableId(value: String): String {
+    val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
     return digest.joinToString("") { "%02x".format(it) }.take(32)
 }
 

@@ -57,14 +57,15 @@ Status: started. The app now has Room-backed `sources`, `ingestion_jobs`, and
 `document_chunks` tables. Captured links create durable jobs, extraction results
 persist as sources, and Inbox/Library/Home observe database state. Library
 search is backed by a Room FTS table, and Inbox has first-pass retry/cancel
-actions.
+actions. Durable tags, collections, and collection membership have been added,
+with a first feed action for adding sources to `Saved playlist`.
 
 Deliverables:
 
 - Add Room. Done.
 - Add Source, IngestionJob, DocumentChunk, Asset, Tag, Collection tables.
-  Source, IngestionJob, and DocumentChunk are done; Asset, Tag, and Collection
-  remain.
+  Source, IngestionJob, DocumentChunk, Tag, Collection, and membership tables
+  are done; Asset remains.
 - Add migrations from version 1 onward.
 - Add repository layer.
 - Add Inbox screen backed by DB state. Done.
@@ -72,6 +73,8 @@ Deliverables:
 - Store normalized extracted fields. Started.
 - Add searchable source index. Started with source/title/summary FTS.
 - Add retry/cancel controls. Started.
+- Add durable organization. Started with tags, collections, and playlist
+  membership.
 
 Exit criteria:
 
