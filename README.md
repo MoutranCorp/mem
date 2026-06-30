@@ -7,6 +7,7 @@ phone without the Debian/proot model used by `mobile-agent`.
 
 - `targetSdk 35` app shell.
 - Share-sheet and manual URL ingestion.
+- Copy/share output for phone-side test logs.
 - Embedded Python through Chaquopy.
 - Pinned, packaged `yt-dlp==2026.6.9`.
 - On-device metadata extraction with `download=False`.
@@ -32,6 +33,14 @@ Install the debug APK on a connected device, then paste a URL or share text to
 ```powershell
 C:\src\androidsdk\platform-tools\adb.exe install -r app\build\outputs\apk\debug\app-debug.apk
 ```
+
+## Current Extractor Limitation
+
+Some sources, especially Instagram Reels, often require a logged-in browser
+session. In that case yt-dlp will return an auth/cookies error even if YouTube
+works. The Play-safe version should not scrape browser cookies silently; the
+next auth spike should evaluate explicit user-imported cookies or a source-level
+login flow.
 
 ## Next Spikes
 

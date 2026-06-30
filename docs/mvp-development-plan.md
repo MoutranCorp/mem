@@ -27,6 +27,7 @@ Status: implemented in this repo.
 - Share-sheet and paste URL ingestion.
 - Runs `yt-dlp.extract_info(url, download=False)` on a background thread.
 - Produces compact JSON suitable for a future RAG document.
+- Output text is selectable and can be copied/shared for test logs.
 
 Acceptance on a real device:
 
@@ -35,6 +36,20 @@ Acceptance on a real device:
 - Confirm extraction returns title, source URL, extractor, duration, thumbnails,
   formats count, and subtitle/automatic-caption language candidates.
 - Confirm no video file is downloaded.
+- Confirm repeated extraction works in one app process with different URLs.
+- Confirm error output can be copied and shared from the phone.
+
+## Spike 0.5: Auth-Gated Sources
+
+Goal: decide the compliant MVP behavior for links that require a logged-in
+session, such as many Instagram Reels.
+
+- Treat logged-out public extraction as the default.
+- Do not silently read cookies from other apps or browsers.
+- Evaluate explicit user-imported cookies as a testing-only option.
+- If kept, store cookies encrypted, scoped by source, and explain that users
+  must have the right to access and process that content.
+- Prefer metadata/link capture fallback when extraction requires auth.
 
 ## Spike 1: FFmpeg Packaging
 

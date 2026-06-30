@@ -1,6 +1,9 @@
 package com.moutrancorp.memspike;
 
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.os.Bundle;
@@ -13,6 +16,7 @@ import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.chaquo.python.PyObject;
 import com.chaquo.python.Python;
@@ -28,6 +32,8 @@ public class MainActivity extends Activity {
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private EditText urlInput;
     private Button extractButton;
+    private Button copyButton;
+    private Button shareButton;
     private ProgressBar progress;
     private TextView output;
 
@@ -92,6 +98,24 @@ public class MainActivity extends Activity {
         extractButton.setOnClickListener(v -> runExtract(urlInput.getText().toString().trim()));
         controls.addView(extractButton);
 
+        copyButton = new Button(this);
+        copyButton.setText("Copy");
+        copyButton.setOnClickListener(v -> copyOutput());
+        LinearLayout.LayoutParams copyParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        copyParams.setMargins(dp(8), 0, 0, 0);
+        controls.addView(copyButton, copyParams);
+
+        shareButton = new Button(this);
+        shareButton.setText("Share");
+        shareButton.setOnClickListener(v -> shareOutput());
+        LinearLayout.LayoutParams shareParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        shareParams.setMargins(dp(8), 0, 0, 0);
+        controls.addView(shareButton, shareParams);
+
         progress = new ProgressBar(this);
         progress.setIndeterminate(true);
         progress.setVisibility(View.GONE);
@@ -106,6 +130,7 @@ public class MainActivity extends Activity {
         output.setTextSize(13);
         output.setTypeface(Typeface.MONOSPACE);
         output.setMovementMethod(new ScrollingMovementMethod());
+        output.setTextIsSelectable(true);
         output.setText("Ready.");
 
         ScrollView scroll = new ScrollView(this);
@@ -143,7 +168,7 @@ public class MainActivity extends Activity {
                     Python.start(new AndroidPlatform(this));
                 }
                 Python py = Python.getInstance();
-                PyObject extractor = py.getModule("extractor");
+                PyObject extractor = py.getModule("mem_yt_dlp_extractor");
                 File filesDir = getFilesDir();
                 String ffmpegPath = findPackagedExecutable("ffmpeg");
                 PyObject raw = extractor.callAttr("extract", url, filesDir.getAbsolutePath(), ffmpegPath);
@@ -161,7 +186,23 @@ public class MainActivity extends Activity {
 
     private void setBusy(boolean busy) {
         extractButton.setEnabled(!busy);
+        copyButton.setEnabled(!busy);
+        shareButton.setEnabled(!busy);
         progress.setVisibility(busy ? View.VISIBLE : View.GONE);
+    }
+
+    private void copyOutput() {
+        ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+        if (clipboard == null) return;
+        clipboard.setPrimaryClip(ClipData.newPlainText("Mem Spike output", output.getText()));
+        Toast.makeText(this, "Output copied", Toast.LENGTH_SHORT).show();
+    }
+
+    private void shareOutput() {
+        Intent send = new Intent(Intent.ACTION_SEND);
+        send.setType("text/plain");
+        send.putExtra(Intent.EXTRA_TEXT, output.getText().toString());
+        startActivity(Intent.createChooser(send, "Share extraction output"));
     }
 
     private String prettyJson(String json) {

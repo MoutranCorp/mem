@@ -40,13 +40,17 @@ def extract(url, files_dir, ffmpeg_path=""):
             "ragCandidate": summarize(info),
         }
     except Exception as exc:
+        message = str(exc)
+        auth_required = is_auth_required(message)
         payload = {
             "ok": False,
             "sourceUrl": url,
             "ytDlpVersion": yt_dlp.version.__version__,
             "durationMs": int((time.time() - started) * 1000),
             "errorType": exc.__class__.__name__,
-            "error": str(exc),
+            "error": message,
+            "authRequired": auth_required,
+            "nextStep": auth_next_step() if auth_required else None,
             "trace": traceback.format_exc(limit=4),
         }
     return json.dumps(payload, ensure_ascii=False)
@@ -133,3 +137,26 @@ def text(value, limit=MAX_TEXT):
     if len(value) <= limit:
         return value
     return value[: limit - 1] + "…"
+
+
+def is_auth_required(message):
+    lower = (message or "").lower()
+    needles = [
+        "cookies",
+        "logged-in",
+        "login",
+        "sign in",
+        "empty media response",
+        "private",
+        "not accessible",
+    ]
+    return any(needle in lower for needle in needles)
+
+
+def auth_next_step():
+    return (
+        "This source appears to require an authenticated browser session. "
+        "The spike only supports logged-out extraction. Copy/share this log, "
+        "and use a public/owned URL for now; a later spike can evaluate explicit "
+        "user-imported cookies."
+    )
