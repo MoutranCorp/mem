@@ -129,6 +129,7 @@ import com.moutrancorp.memspike.data.canonicalize
 import com.moutrancorp.memspike.data.originDomain
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -270,11 +271,14 @@ private class MemAppState(
     private val repository: MemoryRepository,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val libraryQueryFlow = MutableStateFlow("")
 
     var selectedTab by mutableStateOf(MainTab.Mem)
     var showCapture by mutableStateOf(false)
     var showAppearance by mutableStateOf(false)
     var captureText by mutableStateOf("")
+    var libraryQuery by mutableStateOf("")
+        private set
     var isExtracting by mutableStateOf(false)
     var logOutput by mutableStateOf("Ready. Share or paste a link to extract metadata on-device.")
     var appearance by mutableStateOf(appearanceStore.load())
@@ -285,7 +289,7 @@ private class MemAppState(
 
     init {
         scope.launch {
-            repository.observeMemoryState().collect { state ->
+            repository.observeMemoryState(libraryQueryFlow).collect { state ->
                 applyMemoryState(state)
             }
         }
@@ -302,6 +306,11 @@ private class MemAppState(
 
     fun updateLibraryMode(mode: LibraryMode) {
         updateAppearance(appearance.copy(libraryMode = mode))
+    }
+
+    fun updateLibraryQuery(query: String) {
+        libraryQuery = query
+        libraryQueryFlow.value = query
     }
 
     fun openCapture(initialText: String = "", autoExtract: Boolean = false) {
@@ -336,6 +345,27 @@ private class MemAppState(
             )
             isExtracting = false
             logOutput = result.prettyText
+        }
+    }
+
+    fun retryJob(job: IngestionJobUi) {
+        scope.launch {
+            val input = repository.sourceInputForJob(job.id)
+            if (input.isNullOrBlank()) {
+                logOutput = "Could not find the original input for this job."
+            } else {
+                selectedTab = MainTab.Capture
+                captureText = input
+                showCapture = true
+                extract(input)
+            }
+        }
+    }
+
+    fun cancelJob(job: IngestionJobUi) {
+        scope.launch {
+            repository.cancelJob(job.id)
+            logOutput = "Canceled job for ${job.title}."
         }
     }
 
@@ -475,13 +505,20 @@ private data class ExtractionResult(
 
 private data class IngestionJobUi(
     val id: String,
+    val sourceId: String,
     val title: String,
     val source: String,
     val state: String,
     val progress: Float,
     val icon: ImageVector,
     val isError: Boolean,
-)
+) {
+    val canRetry: Boolean
+        get() = state == "Failed" || state == "Needs auth" || state == "Canceled"
+
+    val canCancel: Boolean
+        get() = state == "Queued" || state == "Extracting"
+}
 
 private data class MemoryUi(
     val title: String,
@@ -519,6 +556,7 @@ private fun SourceEntity.toMemoryUi(): MemoryUi {
 private fun IngestionJobEntity.toJobUi(source: SourceEntity?): IngestionJobUi {
     return IngestionJobUi(
         id = id,
+        sourceId = sourceId,
         title = source?.title ?: sourceId,
         source = source?.originDomain ?: jobType,
         state = state.displayState(),
@@ -912,7 +950,11 @@ private fun InboxScreen(state: MemAppState) {
             )
         }
         items(state.jobs, key = { it.id }) { job ->
-            JobRow(job)
+            JobRow(
+                job = job,
+                onRetry = state::retryJob,
+                onCancel = state::cancelJob,
+            )
         }
         item {
             LogPanel(
@@ -948,8 +990,19 @@ private fun LibraryScreen(state: MemAppState) {
             onSelected = state::updateLibraryMode,
         )
         Spacer(modifier = Modifier.height(MemTokens.spacing.md))
-        SearchFilterRow()
+        SearchFilterRow(
+            query = state.libraryQuery,
+            onQueryChange = state::updateLibraryQuery,
+        )
         Spacer(modifier = Modifier.height(MemTokens.spacing.md))
+        if (state.libraryQuery.isNotBlank()) {
+            Text(
+                text = "${state.memories.size} result${if (state.memories.size == 1) "" else "s"} for \"${state.libraryQuery}\"",
+                color = MemTokens.colors.textSecondary,
+                fontSize = 13.sp,
+            )
+            Spacer(modifier = Modifier.height(MemTokens.spacing.sm))
+        }
         when (state.appearance.libraryMode) {
             LibraryMode.Feed -> LibraryFeed(state.memories)
             LibraryMode.Grid -> LibraryGrid(state.memories)
@@ -1304,21 +1357,90 @@ private fun ModeSegmentedControl(selected: LibraryMode, onSelected: (LibraryMode
 }
 
 @Composable
-private fun SearchFilterRow() {
+private fun SearchFilterRow(query: String, onQueryChange: (String) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm), modifier = Modifier.fillMaxWidth()) {
         SurfaceCard(modifier = Modifier.weight(1f)) {
-            Row(
-                modifier = Modifier.padding(horizontal = MemTokens.spacing.md, vertical = MemTokens.spacing.sm),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(Icons.Rounded.Search, contentDescription = null, tint = MemTokens.colors.textTertiary)
-                Spacer(modifier = Modifier.width(MemTokens.spacing.sm))
-                Text("Search your library", color = MemTokens.colors.textTertiary)
-            }
+            BasicTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                singleLine = true,
+                textStyle = TextStyle(color = MemTokens.colors.textPrimary, fontSize = 16.sp),
+                cursorBrush = SolidColor(MemTokens.colors.accent),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = MemTokens.spacing.md, vertical = MemTokens.spacing.sm),
+                decorationBox = { innerTextField ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Search, contentDescription = null, tint = MemTokens.colors.textTertiary)
+                        Spacer(modifier = Modifier.width(MemTokens.spacing.sm))
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (query.isEmpty()) {
+                                Text("Search your library", color = MemTokens.colors.textTertiary)
+                            }
+                            innerTextField()
+                        }
+                    }
+                },
+            )
         }
         MemIconButton(Icons.Rounded.Tune, "Filters") {}
     }
 }
+
+@Composable
+private fun JobRow(
+    job: IngestionJobUi,
+    compact: Boolean = false,
+    onRetry: ((IngestionJobUi) -> Unit)? = null,
+    onCancel: ((IngestionJobUi) -> Unit)? = null,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = if (compact) MemTokens.spacing.xs else MemTokens.spacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconBadge(
+            icon = if (job.isError) Icons.Rounded.ErrorOutline else job.icon,
+            background = if (job.isError) MemTokens.colors.danger.copy(alpha = 0.12f) else MemTokens.colors.accentMuted,
+            tint = if (job.isError) MemTokens.colors.danger else MemTokens.colors.accent,
+        )
+        Spacer(modifier = Modifier.width(MemTokens.spacing.sm))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(job.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("${job.source} - ${job.state}", color = if (job.isError) MemTokens.colors.danger else MemTokens.colors.textSecondary, fontSize = 13.sp)
+            if (!compact && (job.canRetry || job.canCancel)) {
+                Spacer(modifier = Modifier.height(MemTokens.spacing.xs))
+                Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
+                    if (job.canRetry && onRetry != null) {
+                        SmallActionButton("Retry", Icons.Rounded.RestartAlt) { onRetry(job) }
+                    }
+                    if (job.canCancel && onCancel != null) {
+                        SmallActionButton("Cancel", Icons.Rounded.Close) { onCancel(job) }
+                    }
+                }
+            }
+        }
+        Text("${(job.progress * 100).toInt()}%", color = MemTokens.colors.textTertiary, fontSize = 12.sp)
+    }
+}
+
+@Composable
+private fun SmallActionButton(label: String, icon: ImageVector, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .clip(MemTokens.shapes.pill)
+            .clickable(onClick = onClick)
+            .background(MemTokens.colors.surfaceMuted)
+            .padding(horizontal = MemTokens.spacing.sm, vertical = MemTokens.spacing.xxs),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = MemTokens.colors.accent, modifier = Modifier.size(14.dp))
+        Spacer(modifier = Modifier.width(4.dp))
+        Text(label, color = MemTokens.colors.textSecondary, fontSize = 12.sp)
+    }
+}
+
 
 @Composable
 private fun LibraryFeed(memories: List<MemoryUi>) {
@@ -1430,28 +1552,6 @@ private fun LogPanel(output: String, isExtracting: Boolean, onCopy: () -> Unit, 
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun JobRow(job: IngestionJobUi, compact: Boolean = false) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = if (compact) MemTokens.spacing.xs else MemTokens.spacing.sm),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        IconBadge(
-            icon = if (job.isError) Icons.Rounded.ErrorOutline else job.icon,
-            background = if (job.isError) MemTokens.colors.danger.copy(alpha = 0.12f) else MemTokens.colors.accentMuted,
-            tint = if (job.isError) MemTokens.colors.danger else MemTokens.colors.accent,
-        )
-        Spacer(modifier = Modifier.width(MemTokens.spacing.sm))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(job.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text("${job.source} - ${job.state}", color = if (job.isError) MemTokens.colors.danger else MemTokens.colors.textSecondary, fontSize = 13.sp)
-        }
-        Text("${(job.progress * 100).toInt()}%", color = MemTokens.colors.textTertiary, fontSize = 12.sp)
     }
 }
 
@@ -1657,9 +1757,9 @@ private fun DividerLine() {
 }
 
 private fun sampleJobs() = listOf(
-    IngestionJobUi("job-1", "Design review notes.pdf", "PDF", "Processing", 0.6f, Icons.AutoMirrored.Rounded.Article, false),
-    IngestionJobUi("job-2", "Interview with Sarah.mp4", "Video", "Queued", 0.1f, Icons.Rounded.PlayCircle, false),
-    IngestionJobUi("job-3", "Instagram reel", "Link", "Needs auth", 1f, Icons.Rounded.Link, true),
+    IngestionJobUi("job-1", "sample-source-1", "Design review notes.pdf", "PDF", "Processing", 0.6f, Icons.AutoMirrored.Rounded.Article, false),
+    IngestionJobUi("job-2", "sample-source-2", "Interview with Sarah.mp4", "Video", "Queued", 0.1f, Icons.Rounded.PlayCircle, false),
+    IngestionJobUi("job-3", "sample-source-3", "Instagram reel", "Link", "Needs auth", 1f, Icons.Rounded.Link, true),
 )
 
 private fun sampleMemories() = listOf(

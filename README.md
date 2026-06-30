@@ -22,6 +22,8 @@ model used by `mobile-agent`.
 - Room-backed `sources`, `ingestion_jobs`, and `document_chunks` tables.
 - Captured links and extraction outcomes persist across app restarts.
 - Auth-required and failed extractions stay visible in Inbox with logs.
+- Library search is backed by a Room FTS index.
+- Inbox supports retry and cancel actions for durable jobs.
 
 The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and
@@ -64,8 +66,8 @@ The production direction is documented in:
 
 Immediate next steps:
 
-1. Add retry/cancel controls for durable ingestion jobs.
-2. Add SQLite FTS5 indexing over source titles, summaries, and metadata chunks.
+1. Add Asset, Tag, and Collection tables.
+2. Expand FTS indexing to transcript/caption chunks and richer ranking.
 3. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
    libs and pass their paths to `yt-dlp` through `ffmpeg_location`.
 4. Move long downloads to user-initiated data transfer jobs and media processing

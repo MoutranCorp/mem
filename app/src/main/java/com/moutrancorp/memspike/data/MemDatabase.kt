@@ -5,6 +5,7 @@ import androidx.room.Dao
 import androidx.room.Database
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Fts4
 import androidx.room.Index
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
@@ -12,6 +13,8 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(
@@ -96,6 +99,15 @@ data class DocumentChunkEntity(
     val createdAt: Long,
 )
 
+@Fts4
+@Entity(tableName = "source_search")
+data class SourceSearchEntity(
+    val sourceId: String,
+    val title: String,
+    val body: String,
+    val tags: String,
+)
+
 @Dao
 interface SourceDao {
     @Query("SELECT * FROM sources ORDER BY savedAt DESC")
@@ -103,6 +115,16 @@ interface SourceDao {
 
     @Query("SELECT * FROM sources ORDER BY savedAt DESC LIMIT :limit")
     fun observeRecentSources(limit: Int): Flow<List<SourceEntity>>
+
+    @Query(
+        """
+        SELECT sources.* FROM sources
+        INNER JOIN source_search ON sources.id = source_search.sourceId
+        WHERE source_search MATCH :query
+        ORDER BY sources.savedAt DESC
+        """,
+    )
+    fun observeSearchSources(query: String): Flow<List<SourceEntity>>
 
     @Query("SELECT * FROM sources WHERE canonicalUrl = :canonicalUrl LIMIT 1")
     suspend fun findByCanonicalUrl(canonicalUrl: String): SourceEntity?
@@ -122,6 +144,9 @@ interface IngestionJobDao {
     @Query("SELECT * FROM ingestion_jobs WHERE state IN ('queued', 'extracting', 'needs_auth', 'failed') ORDER BY updatedAt DESC LIMIT :limit")
     fun observeActiveJobs(limit: Int): Flow<List<IngestionJobEntity>>
 
+    @Query("SELECT * FROM ingestion_jobs WHERE id = :jobId LIMIT 1")
+    suspend fun findById(jobId: String): IngestionJobEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(job: IngestionJobEntity)
 }
@@ -132,22 +157,56 @@ interface DocumentChunkDao {
     suspend fun upsert(chunk: DocumentChunkEntity)
 }
 
+@Dao
+interface SourceSearchDao {
+    @Query("DELETE FROM source_search WHERE sourceId = :sourceId")
+    suspend fun deleteForSource(sourceId: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(entity: SourceSearchEntity)
+}
+
 @Database(
     entities = [
         SourceEntity::class,
         IngestionJobEntity::class,
         DocumentChunkEntity::class,
+        SourceSearchEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class MemDatabase : RoomDatabase() {
     abstract fun sourceDao(): SourceDao
     abstract fun ingestionJobDao(): IngestionJobDao
     abstract fun documentChunkDao(): DocumentChunkDao
+    abstract fun sourceSearchDao(): SourceSearchDao
 
     companion object {
         @Volatile private var instance: MemDatabase? = null
+
+        private val migration1To2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE VIRTUAL TABLE IF NOT EXISTS `source_search`
+                    USING FTS4(
+                        `sourceId` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `body` TEXT NOT NULL,
+                        `tags` TEXT NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    """
+                    INSERT INTO source_search(sourceId, title, body, tags)
+                    SELECT id, title, COALESCE(summary, '') || ' ' || COALESCE(author, '') || ' ' || COALESCE(originDomain, ''), processingState
+                    FROM sources
+                    """.trimIndent(),
+                )
+            }
+        }
 
         fun get(context: Context): MemDatabase {
             return instance ?: synchronized(this) {
@@ -155,7 +214,10 @@ abstract class MemDatabase : RoomDatabase() {
                     context.applicationContext,
                     MemDatabase::class.java,
                     "mem.db",
-                ).build().also { instance = it }
+                )
+                    .addMigrations(migration1To2)
+                    .build()
+                    .also { instance = it }
             }
         }
     }

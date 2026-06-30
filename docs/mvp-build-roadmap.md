@@ -55,7 +55,9 @@ Goal: replace one-shot extraction output with real data.
 
 Status: started. The app now has Room-backed `sources`, `ingestion_jobs`, and
 `document_chunks` tables. Captured links create durable jobs, extraction results
-persist as sources, and Inbox/Library/Home observe database state.
+persist as sources, and Inbox/Library/Home observe database state. Library
+search is backed by a Room FTS table, and Inbox has first-pass retry/cancel
+actions.
 
 Deliverables:
 
@@ -68,6 +70,8 @@ Deliverables:
 - Add Inbox screen backed by DB state. Done.
 - Store raw metadata JSON. Done.
 - Store normalized extracted fields. Started.
+- Add searchable source index. Started with source/title/summary FTS.
+- Add retry/cancel controls. Started.
 
 Exit criteria:
 

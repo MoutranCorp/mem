@@ -2,15 +2,30 @@ package com.moutrancorp.memspike.data
 
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import java.net.URI
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.UUID
 
 class MemoryRepository(private val database: MemDatabase) {
-    fun observeMemoryState(): Flow<MemoryState> {
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun observeMemoryState(query: Flow<String>): Flow<MemoryState> {
+        val sourceFlow = query
+            .map(::toFtsQuery)
+            .distinctUntilChanged()
+            .flatMapLatest { ftsQuery ->
+                if (ftsQuery.isBlank()) {
+                    database.sourceDao().observeSources()
+                } else {
+                    database.sourceDao().observeSearchSources(ftsQuery)
+                }
+            }
         return combine(
-            database.sourceDao().observeSources(),
+            sourceFlow,
             database.ingestionJobDao().observeJobs(),
         ) { sources, jobs ->
             MemoryState(sources = sources, jobs = jobs)
@@ -54,6 +69,7 @@ class MemoryRepository(private val database: MemDatabase) {
         )
         database.sourceDao().upsert(source)
         database.ingestionJobDao().upsert(job)
+        indexSource(source, null)
         return QueuedSource(sourceId = sourceId, jobId = job.id)
     }
 
@@ -68,6 +84,7 @@ class MemoryRepository(private val database: MemDatabase) {
                 ),
             )
         }
+        source?.let { indexSource(it.copy(processingState = "extracting"), null) }
         database.ingestionJobDao().upsert(
             IngestionJobEntity(
                 id = jobId,
@@ -105,6 +122,7 @@ class MemoryRepository(private val database: MemDatabase) {
             rawMetadataJson = result.rawMetadataJson,
         )
         database.sourceDao().upsert(source)
+        indexSource(source, result.summary)
         database.ingestionJobDao().upsert(
             IngestionJobEntity(
                 id = jobId,
@@ -134,6 +152,55 @@ class MemoryRepository(private val database: MemDatabase) {
                 ),
             )
         }
+    }
+
+    suspend fun cancelJob(jobId: String) {
+        val job = database.ingestionJobDao().findById(jobId) ?: return
+        val source = database.sourceDao().findById(job.sourceId)
+        val now = System.currentTimeMillis()
+        if (source != null) {
+            val updatedSource = source.copy(
+                processingState = "canceled",
+                updatedAt = now,
+            )
+            database.sourceDao().upsert(updatedSource)
+            indexSource(updatedSource, null)
+        }
+        database.ingestionJobDao().upsert(
+            job.copy(
+                state = "canceled",
+                progress = 1f,
+                updatedAt = now,
+            ),
+        )
+    }
+
+    suspend fun sourceInputForJob(jobId: String): String? {
+        val job = database.ingestionJobDao().findById(jobId) ?: return null
+        val source = database.sourceDao().findById(job.sourceId) ?: return null
+        return source.originalUrl
+    }
+
+    private suspend fun indexSource(source: SourceEntity, extractedText: String?) {
+        val tags = listOf(source.processingState, source.sourceType, source.authState, source.originDomain)
+            .filterNotNull()
+            .joinToString(" ")
+        val body = listOfNotNull(
+            source.summary,
+            source.author,
+            source.originDomain,
+            source.originalUrl,
+            extractedText,
+        ).joinToString("\n")
+        database.sourceSearchDao().deleteForSource(source.id)
+        database.sourceSearchDao().insert(
+            SourceSearchEntity(
+                sourceId = source.id,
+                title = source.title,
+                body = body,
+                tags = tags,
+            ),
+        )
     }
 }
 
@@ -182,4 +249,13 @@ fun originDomain(input: String): String? {
 private fun stableSourceId(canonicalUrl: String): String {
     val digest = MessageDigest.getInstance("SHA-256").digest(canonicalUrl.toByteArray())
     return digest.joinToString("") { "%02x".format(it) }.take(32)
+}
+
+private fun toFtsQuery(query: String): String {
+    return query
+        .trim()
+        .split(Regex("\\s+"))
+        .map { token -> token.filter { it.isLetterOrDigit() || it == '_' || it == '-' } }
+        .filter { it.length >= 2 }
+        .joinToString(" ") { "$it*" }
 }
