@@ -4,6 +4,14 @@ This app should be built as a Play-native Android app, not as a proot/Debian
 runtime. All executable and interpreted code must be packaged in the APK/AAB and
 updated only through Play.
 
+Companion planning docs:
+
+- `docs/mvp-product-spec.md`
+- `docs/technical-architecture.md`
+- `docs/design-direction.md`
+- `docs/design-system-customization.md`
+- `docs/mvp-build-roadmap.md`
+
 ## Product Boundary
 
 Mem is a personal memory ingestion and retrieval app. It accepts links and files
