@@ -28,8 +28,8 @@ model used by `mobile-agent`.
 - Library feed can add a source to `Saved playlist` and tag it for review.
 - Durable asset table for thumbnails/files, with extracted thumbnails rendered
   in recent sources, feed, and grid where available.
-- Library collections/playlists live in their own Library mode instead of a
-  large widget above Feed/Grid/Timeline.
+- Collections/playlists live in the bottom dock instead of the Library mode
+  switcher, keeping Feed/Grid/Timeline compact.
 - Clicking non-downloaded source thumbnails opens the original source URL in the
   matching external app/browser when available.
 

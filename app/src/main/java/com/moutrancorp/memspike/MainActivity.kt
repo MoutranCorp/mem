@@ -187,13 +187,13 @@ private enum class MainTab(val label: String, val icon: ImageVector) {
     Inbox("Inbox", Icons.Rounded.Inbox),
     Capture("Capture", Icons.Rounded.Add),
     Library("Library", Icons.Rounded.Bookmarks),
+    Collections("Collections", Icons.Rounded.Folder),
 }
 
 private enum class LibraryMode(val label: String, val icon: ImageVector) {
     Feed("Feed", Icons.Rounded.ViewAgenda),
     Grid("Grid", Icons.Rounded.GridView),
     Timeline("Timeline", Icons.Rounded.Timeline),
-    Collections("Collections", Icons.Rounded.Bookmarks),
 }
 
 private enum class ThemeProfile(val label: String) {
@@ -892,6 +892,7 @@ private fun MemScaffold(state: MemAppState) {
                 MainTab.Inbox -> InboxScreen(state)
                 MainTab.Capture -> MemHomeScreen(state)
                 MainTab.Library -> LibraryScreen(state)
+                MainTab.Collections -> CollectionsScreen(state)
             }
         }
 
@@ -1087,8 +1088,29 @@ private fun LibraryScreen(state: MemAppState) {
             )
             LibraryMode.Grid -> LibraryGrid(state.memories, onOpenMemory = state::openMemory)
             LibraryMode.Timeline -> LibraryTimeline(state.memories)
-            LibraryMode.Collections -> LibraryCollections(state.collections)
         }
+    }
+}
+
+@Composable
+private fun CollectionsScreen(state: MemAppState) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .padding(
+                start = MemTokens.spacing.md,
+                end = MemTokens.spacing.md,
+                top = MemTokens.spacing.lg,
+            ),
+    ) {
+        HeaderRow(
+            title = "Collections",
+            subtitle = "Playlists, saved sets, and organized memory",
+            onAppearance = { state.showAppearance = true },
+        )
+        Spacer(modifier = Modifier.height(MemTokens.spacing.md))
+        LibraryCollections(state.collections)
     }
 }
 
@@ -1741,12 +1763,11 @@ private fun FloatingDock(selectedTab: MainTab, onSelect: (MainTab) -> Unit, modi
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs),
     ) {
-        listOf(MainTab.Mem, MainTab.Inbox).forEach { tab ->
-            DockItem(tab, selectedTab == tab) { onSelect(tab) }
-        }
+        DockItem(MainTab.Mem, selectedTab == MainTab.Mem) { onSelect(MainTab.Mem) }
+        DockItem(MainTab.Inbox, selectedTab == MainTab.Inbox) { onSelect(MainTab.Inbox) }
         Box(
             modifier = Modifier
-                .size(58.dp)
+                .size(54.dp)
                 .clip(CircleShape)
                 .background(MemTokens.colors.accent)
                 .clickable { onSelect(MainTab.Capture) },
@@ -1755,6 +1776,7 @@ private fun FloatingDock(selectedTab: MainTab, onSelect: (MainTab) -> Unit, modi
             Icon(Icons.Rounded.Add, contentDescription = "Capture", tint = Color.White, modifier = Modifier.size(30.dp))
         }
         DockItem(MainTab.Library, selectedTab == MainTab.Library) { onSelect(MainTab.Library) }
+        DockItem(MainTab.Collections, selectedTab == MainTab.Collections) { onSelect(MainTab.Collections) }
     }
 }
 
@@ -1762,16 +1784,22 @@ private fun FloatingDock(selectedTab: MainTab, onSelect: (MainTab) -> Unit, modi
 private fun DockItem(tab: MainTab, selected: Boolean, onClick: () -> Unit) {
     Column(
         modifier = Modifier
-            .widthIn(min = 74.dp)
+            .widthIn(min = 62.dp)
             .clip(MemTokens.shapes.lg)
             .clickable(onClick = onClick)
             .background(if (selected) MemTokens.colors.dockSelected else Color.Transparent)
-            .padding(horizontal = MemTokens.spacing.sm, vertical = MemTokens.spacing.sm),
+            .padding(horizontal = MemTokens.spacing.xs, vertical = MemTokens.spacing.sm),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Icon(tab.icon, contentDescription = tab.label, tint = if (selected) MemTokens.colors.accent else MemTokens.colors.textSecondary)
-        Text(tab.label, color = if (selected) MemTokens.colors.accent else MemTokens.colors.textSecondary, fontSize = 12.sp, maxLines = 1)
+        Text(
+            tab.label,
+            color = if (selected) MemTokens.colors.accent else MemTokens.colors.textSecondary,
+            fontSize = 10.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

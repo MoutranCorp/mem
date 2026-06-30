@@ -61,10 +61,10 @@ actions. Durable tags, collections, and collection membership have been added,
 with a first feed action for adding sources to `Saved playlist`.
 The asset table has also been added, and extracted remote thumbnails are stored
 as durable asset records and rendered in the Library UI where available.
-Collections/playlists have moved into a dedicated Library mode so they do not
-compete visually with Feed/Grid/Timeline. Source thumbnails now have the first
-open behavior: non-downloaded sources open externally, while downloaded/local
-media is reserved for the upcoming in-app playback slice.
+Collections/playlists have moved into the bottom dock so the Library mode
+switcher stays compact with Feed/Grid/Timeline. Source thumbnails now have the
+first open behavior: non-downloaded sources open externally, while
+downloaded/local media is reserved for the upcoming in-app playback slice.
 
 Deliverables:
 
