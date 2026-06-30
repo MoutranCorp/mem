@@ -295,7 +295,8 @@ Exit criteria:
    filters now apply to fused keyword/semantic results, and cited cards show
    rank signals. Duration filters plus saved/date ranges are now enforced
    against fused results, and timestamped source-detail chunks can jump local
-   playback to their indexed moment.
+   playback to their indexed moment. Tag and collection membership filters are
+   now enforced as hard filters through `tag:` and `collection:`.
 3. Add richer source-detail transcript/article layouts with jump targets.
 4. Add benchmark fixtures for saved videos, articles, notes, PDFs, and image
    memories. Started with `tools/search_rag_eval.py` and

@@ -679,6 +679,17 @@ interface TagDao {
     @Query("SELECT tags.* FROM tags INNER JOIN source_tags ON tags.id = source_tags.tagId WHERE source_tags.sourceId = :sourceId ORDER BY tags.name")
     suspend fun tagsForSource(sourceId: String): List<TagEntity>
 
+    @Query(
+        """
+        SELECT source_tags.sourceId FROM source_tags
+        INNER JOIN tags ON tags.id = source_tags.tagId
+        WHERE tags.name IN (:names)
+        GROUP BY source_tags.sourceId
+        HAVING COUNT(DISTINCT tags.name) = :nameCount
+        """,
+    )
+    suspend fun sourceIdsWithAllTagNames(names: List<String>, nameCount: Int): List<String>
+
     @Query("SELECT * FROM tags WHERE name = :name LIMIT 1")
     suspend fun findByName(name: String): TagEntity?
 
@@ -710,6 +721,17 @@ interface CollectionDao {
 
     @Query("SELECT * FROM collections WHERE title = :title LIMIT 1")
     suspend fun findByTitle(title: String): CollectionEntity?
+
+    @Query(
+        """
+        SELECT collection_sources.sourceId FROM collection_sources
+        INNER JOIN collections ON collections.id = collection_sources.collectionId
+        WHERE lower(collections.title) IN (:titles)
+        GROUP BY collection_sources.sourceId
+        HAVING COUNT(DISTINCT lower(collections.title)) = :titleCount
+        """,
+    )
+    suspend fun sourceIdsInAllCollections(titles: List<String>, titleCount: Int): List<String>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(collection: CollectionEntity)

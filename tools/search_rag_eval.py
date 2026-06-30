@@ -31,6 +31,8 @@ class Chunk:
     author: str | None
     duration_seconds: int | None
     saved_at: int
+    tags: frozenset[str]
+    collections: frozenset[str]
     chunk_type: str
     text: str
     start_time_ms: int | None = None
@@ -45,6 +47,8 @@ class ParsedQuery:
     types: set[str]
     domains: set[str]
     statuses: set[str]
+    tag_filters: set[str]
+    collection_filters: set[str]
     required_chunk_types: set[str]
     required_capabilities: set[str]
     duration_ranges: list[range]
@@ -57,6 +61,8 @@ class ParsedQuery:
                 self.types,
                 self.domains,
                 self.statuses,
+                self.tag_filters,
+                self.collection_filters,
                 self.required_chunk_types,
                 self.required_capabilities,
                 self.duration_ranges,
@@ -156,6 +162,8 @@ def parse_query(query: str) -> ParsedQuery:
     types: set[str] = set()
     domains: set[str] = set()
     statuses: set[str] = set()
+    tag_filters: set[str] = set()
+    collection_filters: set[str] = set()
     required_chunk_types: set[str] = set()
     required_capabilities: set[str] = set()
     duration_ranges: list[range] = []
@@ -193,7 +201,11 @@ def parse_query(query: str) -> ParsedQuery:
                 statuses.add("needs_auth")
             else:
                 soft_terms.append(value)
-        elif key in {"tag", "collection", "author", "channel", "language", "action"}:
+        elif key == "tag":
+            tag_filters.add(value)
+        elif key == "collection":
+            collection_filters.add(value)
+        elif key in {"author", "channel", "language", "action"}:
             soft_terms.append(value)
         elif key == "duration":
             parsed = parse_duration_range(value)
@@ -218,6 +230,8 @@ def parse_query(query: str) -> ParsedQuery:
         types={item for item in types if item},
         domains={item for item in domains if item},
         statuses={item for item in statuses if item},
+        tag_filters={item for item in tag_filters if item},
+        collection_filters={item for item in collection_filters if item},
         required_chunk_types=required_chunk_types,
         required_capabilities=required_capabilities,
         duration_ranges=duration_ranges,
@@ -346,6 +360,8 @@ def haystack(chunk: Chunk, mode: str = "") -> str:
             chunk.source_type,
             chunk.origin_domain or "",
             chunk.author or "",
+            " ".join(sorted(chunk.tags)),
+            " ".join(sorted(chunk.collections)),
             chunk.text,
             chunk.chunk_type,
             mode,
@@ -365,6 +381,10 @@ def matches(parsed: ParsedQuery, chunk: Chunk, mode: str = "") -> bool:
         if not domain or not any(domain == item or domain.endswith(f".{item}") for item in parsed.domains):
             return False
     if parsed.statuses and not any(status in text for status in parsed.statuses):
+        return False
+    if parsed.tag_filters and not parsed.tag_filters.issubset(chunk.tags):
+        return False
+    if parsed.collection_filters and not parsed.collection_filters.issubset(chunk.collections):
         return False
     if parsed.required_chunk_types and chunk.chunk_type.lower() not in parsed.required_chunk_types:
         return False
@@ -391,6 +411,10 @@ def rank_boost(parsed: ParsedQuery, result: Result) -> float:
         boost += 0.35
     if parsed.domains and result.chunk.origin_domain and any(item in result.chunk.origin_domain.lower() for item in parsed.domains):
         boost += 0.25
+    if parsed.tag_filters and parsed.tag_filters.issubset(result.chunk.tags):
+        boost += 0.22
+    if parsed.collection_filters and parsed.collection_filters.issubset(result.chunk.collections):
+        boost += 0.22
     if parsed.duration_ranges and result.chunk.duration_seconds is not None:
         boost += 0.18
     if parsed.saved_ranges or parsed.date_ranges:
@@ -496,6 +520,8 @@ def load_fixture(path: Path) -> tuple[list[Chunk], list[dict[str, Any]]]:
                 author=source.get("author"),
                 duration_seconds=source.get("durationSeconds"),
                 saved_at=parse_fixture_time(source["savedAt"]),
+                tags=frozenset(source.get("tags", [])),
+                collections=frozenset(item.lower() for item in source.get("collections", [])),
                 chunk_type=raw["chunkType"],
                 text=raw["text"],
                 start_time_ms=raw.get("startTimeMs"),

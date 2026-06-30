@@ -16,7 +16,9 @@
       "originDomain": "youtube.com",
       "author": "Travel Desk",
       "durationSeconds": 240,
-      "savedAt": "2026-06-25T12:00:00Z"
+      "savedAt": "2026-06-25T12:00:00Z",
+      "tags": ["travel", "japan"],
+      "collections": ["japan"]
     },
     {
       "id": "article_kyoto_hotels",
@@ -25,7 +27,9 @@
       "originDomain": "example.com",
       "author": "Mina Park",
       "durationSeconds": null,
-      "savedAt": "2026-05-02T09:00:00Z"
+      "savedAt": "2026-05-02T09:00:00Z",
+      "tags": ["travel", "japan"],
+      "collections": ["japan"]
     },
     {
       "id": "note_japan_itinerary",
@@ -34,7 +38,9 @@
       "originDomain": null,
       "author": null,
       "durationSeconds": null,
-      "savedAt": "2026-06-18T08:30:00Z"
+      "savedAt": "2026-06-18T08:30:00Z",
+      "tags": ["travel", "japan", "planning"],
+      "collections": ["japan"]
     },
     {
       "id": "pdf_ai_agents",
@@ -43,7 +49,9 @@
       "originDomain": null,
       "author": "Mem Research",
       "durationSeconds": null,
-      "savedAt": "2026-04-12T15:00:00Z"
+      "savedAt": "2026-04-12T15:00:00Z",
+      "tags": ["research"],
+      "collections": ["ai research"]
     },
     {
       "id": "instagram_needs_auth",
@@ -184,6 +192,20 @@
       "query": "type:pdf ai agents",
       "expectedTopSourceId": "pdf_ai_agents",
       "allResultsSourceType": "pdf",
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Tag hard filter",
+      "query": "tag:travel japan",
+      "expectedAnySourceIds": ["yt_japan_food_short", "article_kyoto_hotels", "note_japan_itinerary"],
+      "minResults": 3,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Collection hard filter",
+      "query": "collection:japan trip planning",
+      "expectedAnySourceIds": ["yt_japan_food_short", "article_kyoto_hotels", "note_japan_itinerary"],
+      "minResults": 3,
       "requiresRankSignals": true
     },
     {

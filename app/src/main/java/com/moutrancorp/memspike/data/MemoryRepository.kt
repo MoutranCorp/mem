@@ -142,12 +142,13 @@ class MemoryRepository(private val database: MemDatabase) {
             }
         }
         val semanticResults = semanticSearch(rawQuery, 120)
-        val fused = fuseSearchResults(ftsResults, semanticResults, parsed).take(SEARCH_RESULT_LIMIT)
+        val filterContext = searchFilterContext(parsed)
+        val fused = fuseSearchResults(ftsResults, semanticResults, parsed, filterContext).take(SEARCH_RESULT_LIMIT)
         database.searchQueryDao().insert(
             SearchQueryEntity(
                 id = UUID.randomUUID().toString(),
                 query = rawQuery,
-                parsedFiltersJson = parsed.toJson(),
+                parsedFiltersJson = parsed.toJson(filterContext),
                 resultCount = fused.size,
                 createdAt = System.currentTimeMillis(),
             ),
@@ -171,15 +172,38 @@ class MemoryRepository(private val database: MemDatabase) {
             .take(limit)
     }
 
-    private fun fuseSearchResults(keyword: List<SearchResultData>, semantic: List<SearchResultData>, parsed: ParsedSearchQuery): List<SearchResultData> {
+    private suspend fun searchFilterContext(parsed: ParsedSearchQuery): SearchFilterContext {
+        val tagSourceIds = if (parsed.tagFilters.isEmpty()) {
+            null
+        } else {
+            database.tagDao()
+                .sourceIdsWithAllTagNames(parsed.tagFilters.toList(), parsed.tagFilters.size)
+                .toSet()
+        }
+        val collectionSourceIds = if (parsed.collectionFilters.isEmpty()) {
+            null
+        } else {
+            database.collectionDao()
+                .sourceIdsInAllCollections(parsed.collectionFilters.toList(), parsed.collectionFilters.size)
+                .toSet()
+        }
+        return SearchFilterContext(tagSourceIds = tagSourceIds, collectionSourceIds = collectionSourceIds)
+    }
+
+    private fun fuseSearchResults(
+        keyword: List<SearchResultData>,
+        semantic: List<SearchResultData>,
+        parsed: ParsedSearchQuery,
+        filterContext: SearchFilterContext,
+    ): List<SearchResultData> {
         val byChunk = linkedMapOf<String, SearchResultData>()
         (keyword + semantic)
-            .filter { parsed.matches(it) }
+            .filter { parsed.matches(it, filterContext) }
             .forEachIndexed { index, result ->
             val existing = byChunk[result.chunkId]
             val sourceDedupePenalty = byChunk.values.count { it.sourceId == result.sourceId } * 0.03f
             val recencyBoost = 1.0f / (1 + index)
-            val filterBoost = parsed.rankBoost(result)
+            val filterBoost = parsed.rankBoost(result, filterContext)
             val score = result.rankScore + recencyBoost + filterBoost - sourceDedupePenalty
             val ranked = result.copy(
                 rankScore = score,
@@ -1517,13 +1541,15 @@ private data class ParsedSearchQuery(
     val types: Set<String>,
     val domains: Set<String>,
     val statuses: Set<String>,
+    val tagFilters: Set<String>,
+    val collectionFilters: Set<String>,
     val requiredChunkTypes: Set<String>,
     val requiredCapabilities: Set<String>,
     val durationRanges: List<LongRange>,
     val savedRanges: List<LongRange>,
     val dateRanges: List<LongRange>,
 ) {
-    fun matches(result: SearchResultData): Boolean {
+    fun matches(result: SearchResultData, filterContext: SearchFilterContext): Boolean {
         val haystack = result.searchHaystack()
         if (negativeTerms.any { haystack.contains(it.lowercase(Locale.US)) }) return false
         if (types.isNotEmpty() && result.sourceType.lowercase(Locale.US) !in types) return false
@@ -1532,6 +1558,8 @@ private data class ParsedSearchQuery(
             if (domain == null || domains.none { domain == it || domain.endsWith(".$it") }) return false
         }
         if (statuses.isNotEmpty() && statuses.none { haystack.contains(it) }) return false
+        filterContext.tagSourceIds?.let { if (result.sourceId !in it) return false }
+        filterContext.collectionSourceIds?.let { if (result.sourceId !in it) return false }
         if (requiredChunkTypes.isNotEmpty() && result.chunkType.lowercase(Locale.US) !in requiredChunkTypes) return false
         if ("timestamp" in requiredCapabilities && result.startTimeMs == null) return false
         if (durationRanges.isNotEmpty()) {
@@ -1547,6 +1575,8 @@ private data class ParsedSearchQuery(
         return types.isNotEmpty() ||
             domains.isNotEmpty() ||
             statuses.isNotEmpty() ||
+            tagFilters.isNotEmpty() ||
+            collectionFilters.isNotEmpty() ||
             requiredChunkTypes.isNotEmpty() ||
             requiredCapabilities.isNotEmpty() ||
             durationRanges.isNotEmpty() ||
@@ -1555,13 +1585,15 @@ private data class ParsedSearchQuery(
             negativeTerms.isNotEmpty()
     }
 
-    fun rankBoost(result: SearchResultData): Float {
+    fun rankBoost(result: SearchResultData, filterContext: SearchFilterContext): Float {
         val haystack = result.searchHaystack()
         var boost = 0f
         phrases.forEach { phrase -> if (haystack.contains(phrase.lowercase(Locale.US))) boost += 0.45f }
         freeTerms.forEach { term -> if (haystack.contains(term.lowercase(Locale.US))) boost += 0.12f }
         if (requiredChunkTypes.contains(result.chunkType.lowercase(Locale.US))) boost += 0.35f
         if (domains.any { result.originDomain?.lowercase(Locale.US)?.contains(it) == true }) boost += 0.25f
+        if (filterContext.tagSourceIds?.contains(result.sourceId) == true) boost += 0.22f
+        if (filterContext.collectionSourceIds?.contains(result.sourceId) == true) boost += 0.22f
         if (durationRanges.isNotEmpty() && result.durationSeconds != null) boost += 0.18f
         if (savedRanges.isNotEmpty() || dateRanges.isNotEmpty()) boost += 0.12f
         if (result.startTimeMs != null) boost += 0.08f
@@ -1569,7 +1601,7 @@ private data class ParsedSearchQuery(
         return boost
     }
 
-    fun toJson(): String {
+    fun toJson(filterContext: SearchFilterContext): String {
         return JSONObject()
             .put("phrases", JSONArray(phrases))
             .put("freeTerms", JSONArray(freeTerms))
@@ -1578,6 +1610,10 @@ private data class ParsedSearchQuery(
             .put("types", JSONArray(types.toList()))
             .put("domains", JSONArray(domains.toList()))
             .put("statuses", JSONArray(statuses.toList()))
+            .put("tagFilters", JSONArray(tagFilters.toList()))
+            .put("collectionFilters", JSONArray(collectionFilters.toList()))
+            .put("tagFilterMatches", filterContext.tagSourceIds?.size ?: 0)
+            .put("collectionFilterMatches", filterContext.collectionSourceIds?.size ?: 0)
             .put("requiredChunkTypes", JSONArray(requiredChunkTypes.toList()))
             .put("requiredCapabilities", JSONArray(requiredCapabilities.toList()))
             .put("durationRanges", JSONArray(durationRanges.map { "${it.first}..${it.last}" }))
@@ -1587,6 +1623,11 @@ private data class ParsedSearchQuery(
     }
 }
 
+private data class SearchFilterContext(
+    val tagSourceIds: Set<String>?,
+    val collectionSourceIds: Set<String>?,
+)
+
 private fun parseSearchQuery(query: String): ParsedSearchQuery {
     val freeTerms = mutableListOf<String>()
     val softTerms = mutableListOf<String>()
@@ -1594,6 +1635,8 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
     val types = mutableSetOf<String>()
     val domains = mutableSetOf<String>()
     val statuses = mutableSetOf<String>()
+    val tagFilters = mutableSetOf<String>()
+    val collectionFilters = mutableSetOf<String>()
     val requiredChunkTypes = mutableSetOf<String>()
     val requiredCapabilities = mutableSetOf<String>()
     val durationRanges = mutableListOf<LongRange>()
@@ -1630,7 +1673,9 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
                         "auth" -> statuses.add("needs_auth")
                         else -> softTerms.add(value)
                     }
-                    "tag", "collection", "author", "channel", "language", "action" -> softTerms.add(value)
+                    "tag" -> tagFilters.add(value)
+                    "collection" -> collectionFilters.add(value)
+                    "author", "channel", "language", "action" -> softTerms.add(value)
                     "duration" -> parseDurationRange(value)?.let(durationRanges::add)
                     "saved" -> parseDateRange(value)?.let(savedRanges::add)
                     "date" -> parseDateRange(value)?.let(dateRanges::add)
@@ -1648,6 +1693,8 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
         types = types.filter { it.isNotBlank() }.toSet(),
         domains = domains.filter { it.isNotBlank() }.toSet(),
         statuses = statuses.filter { it.isNotBlank() }.toSet(),
+        tagFilters = tagFilters.filter { it.isNotBlank() }.toSet(),
+        collectionFilters = collectionFilters.filter { it.isNotBlank() }.toSet(),
         requiredChunkTypes = requiredChunkTypes,
         requiredCapabilities = requiredCapabilities,
         durationRanges = durationRanges,

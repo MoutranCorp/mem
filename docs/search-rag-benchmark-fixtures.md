@@ -79,6 +79,8 @@ Queries:
 - `status:needs_auth site:instagram.com`
 - `type:video duration:<5m saved:last30d`
 - `date:2026-06 has:timestamp`
+- `tag:travel japan`
+- `collection:japan trip planning`
 - `"exact phrase" -ignored`
 
 Expected:
@@ -86,6 +88,8 @@ Expected:
 - Filters contribute to retrieval tokens and result explanations.
 - Nonmatching source types/domains/status/capabilities should be removed from
   the cited result set when a hard filter is present.
+- Tag and collection filters should be enforced from membership tables, not
+  treated as ordinary text hints.
 - Quoted phrases remain searchable as meaningful terms.
 - Cited result cards expose rank signals for debugging keyword, semantic,
   recency, filter, and hybrid behavior.
