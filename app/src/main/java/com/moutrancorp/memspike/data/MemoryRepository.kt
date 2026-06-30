@@ -279,6 +279,67 @@ class MemoryRepository(private val database: MemDatabase) {
         return domain
     }
 
+    suspend fun saveLocalVideo(
+        stableInput: String,
+        fileName: String,
+        filePath: String,
+        mimeType: String?,
+        durationMs: Long?,
+    ): String {
+        val now = System.currentTimeMillis()
+        val canonicalUrl = canonicalize(stableInput)
+        val existing = database.sourceDao().findByCanonicalUrl(canonicalUrl)
+        val sourceId = existing?.id ?: stableSourceId(canonicalUrl)
+        val title = fileName.takeIf { it.isNotBlank() } ?: "Imported video"
+        val durationSeconds = durationMs?.let { (it / 1000L).coerceAtLeast(0L) }
+        val raw = """{
+  "ok": true,
+  "sourceType": "video",
+  "extractor": "local_video_import",
+  "title": ${title.jsonString()},
+  "mimeType": ${mimeType.jsonStringOrNull()},
+  "localPath": ${filePath.jsonString()},
+  "durationMs": ${durationMs ?: 0}
+}"""
+        val source = SourceEntity(
+            id = sourceId,
+            canonicalUrl = canonicalUrl,
+            originalUrl = stableInput,
+            sourceType = "video",
+            originDomain = null,
+            title = title,
+            author = "Imported video",
+            summary = "Local video imported into Mem and ready for in-app playback.",
+            thumbnailUrl = null,
+            durationSeconds = durationSeconds,
+            savedAt = existing?.savedAt ?: now,
+            updatedAt = now,
+            rightsState = "user_owned",
+            authState = "local",
+            processingState = "done",
+            rawMetadataJson = raw,
+        )
+        database.sourceDao().upsert(source)
+        database.assetDao().upsert(
+            AssetEntity(
+                id = stableId("asset:${source.id}:playback"),
+                sourceId = source.id,
+                assetType = "video",
+                role = "playback",
+                remoteUrl = null,
+                localPath = filePath,
+                mimeType = mimeType,
+                width = null,
+                height = null,
+                durationMs = durationMs,
+                createdAt = now,
+            ),
+        )
+        ensureTags(source.id, listOf("video", "local", "playable", "done"))
+        indexSource(source, source.summary)
+        return source.id
+    }
+
     private suspend fun indexSource(source: SourceEntity, extractedText: String?) {
         val durableTags = database.tagDao().tagsForSource(source.id).map { it.name }
         val tags = (listOf(source.processingState, source.sourceType, source.authState, source.originDomain) + durableTags)
@@ -320,6 +381,10 @@ class MemoryRepository(private val database: MemDatabase) {
             }
     }
 }
+
+private fun String.jsonString(): String = "\"" + replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
+private fun String?.jsonStringOrNull(): String = this?.jsonString() ?: "null"
 
 data class MemoryState(
     val sources: List<SourceEntity>,

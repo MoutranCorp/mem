@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.database.Cursor
 import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -33,6 +34,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -113,6 +115,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -144,6 +147,10 @@ import coil.request.ImageRequest
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
 import com.moutrancorp.memspike.data.AssetEntity
 import com.moutrancorp.memspike.data.CollectionSummary
 import com.moutrancorp.memspike.data.ExtractedSourceData
@@ -326,6 +333,8 @@ private class MemAppState(
         private set
     var selectedMemory by mutableStateOf<MemoryUi?>(null)
         private set
+    var playingMemory by mutableStateOf<MemoryUi?>(null)
+        private set
     var instagramAuthMemory by mutableStateOf<MemoryUi?>(null)
         private set
     var isExtracting by mutableStateOf(false)
@@ -428,6 +437,26 @@ private class MemAppState(
         showCapture = true
         logOutput = "Importing file...\n\n$uri"
         scope.launch {
+            if (context.isVideoUri(uri)) {
+                val importedVideo = withContext(Dispatchers.IO) { context.copySharedVideoFile(uri) }
+                if (importedVideo == null) {
+                    isExtracting = false
+                    logOutput = "Could not read this video."
+                    return@launch
+                }
+                captureText = importedVideo.fileName
+                val sourceId = repository.saveLocalVideo(
+                    stableInput = importedVideo.stableInput,
+                    fileName = importedVideo.fileName,
+                    filePath = importedVideo.file.absolutePath,
+                    mimeType = importedVideo.mimeType,
+                    durationMs = importedVideo.durationMs,
+                )
+                isExtracting = false
+                logOutput = "Imported playable video into Mem.\n\n${importedVideo.fileName}\n$sourceId"
+                return@launch
+            }
+
             if (context.isImageUri(uri)) {
                 val importedImage = withContext(Dispatchers.IO) { context.copySharedImageFile(uri) }
                 if (importedImage == null) {
@@ -531,6 +560,10 @@ private class MemAppState(
 
     fun closeSourceDetail() {
         selectedMemory = null
+    }
+
+    fun closePlayer() {
+        playingMemory = null
     }
 
     fun retryMemoryExtraction(memory: MemoryUi) {
@@ -649,7 +682,8 @@ private class MemAppState(
 
     fun openMemory(memory: MemoryUi) {
         if (memory.localPlaybackPath != null) {
-            logOutput = "In-app playback is reserved for downloaded media. Local player UI comes with the offline-save slice."
+            playingMemory = memory
+            selectedMemory = null
             return
         }
         val url = memory.openUrl
@@ -669,12 +703,15 @@ private class MemAppState(
         val thumbnailBySource = state.assets
             .filter { it.role == "thumbnail" }
             .associateBy { it.sourceId }
+        val playbackBySource = state.assets
+            .filter { it.role == "playback" }
+            .associateBy { it.sourceId }
         memories.clear()
         memories.addAll(
             if (state.sources.isEmpty()) {
                 sampleMemories()
             } else {
-                state.sources.map { it.toMemoryUi(thumbnailBySource[it.id]) }
+                state.sources.map { it.toMemoryUi(thumbnailBySource[it.id], playbackBySource[it.id]) }
             },
         )
         jobs.clear()
@@ -946,6 +983,14 @@ private data class ImportedImageFile(
     val stableInput: String,
 )
 
+private data class ImportedVideoFile(
+    val fileName: String,
+    val mimeType: String?,
+    val file: File,
+    val stableInput: String,
+    val durationMs: Long?,
+)
+
 private fun Context.readSharedTextFile(uri: Uri): ImportedTextFile? {
     val fileName = uri.displayName(this) ?: "Imported text"
     val mimeType = contentResolver.getType(uri)
@@ -990,6 +1035,72 @@ private fun Context.isImageUri(uri: Uri): Boolean {
         fileName.endsWith(".png", ignoreCase = true) ||
         fileName.endsWith(".webp", ignoreCase = true) ||
         fileName.endsWith(".gif", ignoreCase = true)
+}
+
+private fun Context.isVideoUri(uri: Uri): Boolean {
+    val fileName = uri.displayName(this).orEmpty()
+    val mimeType = contentResolver.getType(uri).orEmpty()
+    return mimeType.startsWith("video/", ignoreCase = true) ||
+        fileName.endsWith(".mp4", ignoreCase = true) ||
+        fileName.endsWith(".m4v", ignoreCase = true) ||
+        fileName.endsWith(".webm", ignoreCase = true) ||
+        fileName.endsWith(".mov", ignoreCase = true) ||
+        fileName.endsWith(".mkv", ignoreCase = true)
+}
+
+private fun Context.copySharedVideoFile(uri: Uri): ImportedVideoFile? {
+    val fileName = uri.displayName(this) ?: "Imported video"
+    val mimeType = contentResolver.getType(uri)
+    val importsDir = File(filesDir, "mem-imports/videos").apply { mkdirs() }
+    val extension = fileName.substringAfterLast('.', missingDelimiterValue = "")
+        .takeIf { it.length in 2..5 }
+        ?: mimeType?.substringAfter('/', missingDelimiterValue = "")?.takeIf { it.isNotBlank() }
+        ?: "mp4"
+    val temp = File(importsDir, "${UUID.randomUUID()}.$extension")
+    val digest = MessageDigest.getInstance("SHA-256")
+    val total = contentResolver.openInputStream(uri)?.use { input ->
+        temp.outputStream().use { output ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var totalBytes = 0L
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                totalBytes += read
+                if (totalBytes > MAX_VIDEO_FILE_BYTES) {
+                    temp.delete()
+                    return null
+                }
+                digest.update(buffer, 0, read)
+                output.write(buffer, 0, read)
+            }
+            totalBytes
+        }
+    } ?: return null
+    if (total <= 0L) return null
+    val hash = digest.digest().joinToString("") { "%02x".format(it) }
+    val stableInput = "mem-file://${Uri.encode(fileName)}/$hash"
+    val target = File(importsDir, "$hash.$extension")
+    if (target.exists()) {
+        temp.delete()
+    } else {
+        temp.renameTo(target)
+    }
+    val durationMs = runCatching {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(target.absolutePath)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+        } finally {
+            retriever.release()
+        }
+    }.getOrNull()
+    return ImportedVideoFile(
+        fileName = fileName,
+        mimeType = mimeType,
+        file = target,
+        stableInput = stableInput,
+        durationMs = durationMs,
+    )
 }
 
 private fun Context.copySharedImageFile(uri: Uri): ImportedImageFile? {
@@ -1186,6 +1297,7 @@ private fun ImportedImageFile.toImageData(): ExtractedSourceData {
 private const val MAX_TEXT_FILE_BYTES = 1_000_000
 private const val MAX_PDF_FILE_BYTES = 20_000_000
 private const val MAX_IMAGE_FILE_BYTES = 20_000_000
+private const val MAX_VIDEO_FILE_BYTES = 500_000_000L
 
 private data class IngestionJobUi(
     val id: String,
@@ -1234,9 +1346,11 @@ private data class CollectionUi(
     val updatedAt: Long,
 )
 
-private fun SourceEntity.toMemoryUi(thumbnailAsset: AssetEntity?): MemoryUi {
+private fun SourceEntity.toMemoryUi(thumbnailAsset: AssetEntity?, playbackAsset: AssetEntity?): MemoryUi {
     val normalizedType = if (sourceType == "needs_auth") "link" else sourceType
     val typeLabel = normalizedType.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+    val localPlaybackPath = playbackAsset?.localPath
+    val duration = durationSeconds ?: playbackAsset?.durationMs?.let { it / 1000L }
     return MemoryUi(
         id = id,
         title = title,
@@ -1253,9 +1367,9 @@ private fun SourceEntity.toMemoryUi(thumbnailAsset: AssetEntity?): MemoryUi {
         time = savedAt.relativeTime(),
         icon = sourceIcon(normalizedType, processingState),
         thumbnailUrl = thumbnailAsset?.remoteUrl ?: thumbnailUrl,
-        durationLabel = durationSeconds?.durationLabel(),
+        durationLabel = duration?.durationLabel(),
         openUrl = originalUrl.takeUnless { sourceType == "note" || it.startsWith("mem-file://") },
-        localPlaybackPath = null,
+        localPlaybackPath = localPlaybackPath,
         processingState = processingState,
         authState = authState,
         rawMetadataJson = rawMetadataJson,
@@ -1626,6 +1740,13 @@ private fun MemScaffold(state: MemAppState) {
         InstagramConnectionScreen(
             onClose = state::closeInstagramConnection,
             onSave = state::saveInstagramConnection,
+        )
+    }
+
+    state.playingMemory?.let { memory ->
+        FullscreenPlayerScreen(
+            memory = memory,
+            onClose = state::closePlayer,
         )
     }
 }
@@ -2044,6 +2165,7 @@ private fun CaptureSheet(state: MemAppState) {
                             "text/*",
                             "application/pdf",
                             "image/*",
+                            "video/*",
                             "application/json",
                             "application/xml",
                             "application/x-yaml",
@@ -2208,6 +2330,24 @@ private fun SourceDetailSheet(
             )
         }
 
+        memory.localPlaybackPath?.let { path ->
+            SurfaceCard {
+                Column(
+                    modifier = Modifier.padding(MemTokens.spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
+                ) {
+                    Text("Playback", color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
+                    LocalVideoPlayer(
+                        path = path,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(220.dp)
+                            .clip(MemTokens.shapes.lg),
+                    )
+                }
+            }
+        }
+
         SurfaceCard {
             Column(
                 modifier = Modifier.padding(MemTokens.spacing.md),
@@ -2272,8 +2412,8 @@ private fun SourceDetailSheet(
 
         Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
             PrimaryButton(
-                label = "Open source",
-                icon = Icons.Rounded.Link,
+                label = if (memory.localPlaybackPath == null) "Open source" else "Play in Mem",
+                icon = if (memory.localPlaybackPath == null) Icons.Rounded.Link else Icons.Rounded.PlayCircle,
                 onClick = { onOpenMemory(memory) },
                 modifier = Modifier.weight(1f),
             )
@@ -2480,6 +2620,69 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
             }
         }
     }
+}
+
+@Composable
+private fun FullscreenPlayerScreen(memory: MemoryUi, onClose: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding(),
+        color = Color.Black,
+        contentColor = Color.White,
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(MemTokens.spacing.md),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(memory.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(memory.source, color = Color.White.copy(alpha = 0.72f), fontSize = 12.sp, maxLines = 1)
+                }
+                MemIconButton(Icons.Rounded.Close, "Close", onClose)
+            }
+            memory.localPlaybackPath?.let { path ->
+                LocalVideoPlayer(
+                    path = path,
+                    autoPlay = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocalVideoPlayer(path: String, modifier: Modifier = Modifier, autoPlay: Boolean = false) {
+    val context = LocalContext.current
+    val mediaItem = remember(path) { MediaItem.fromUri(Uri.fromFile(File(path))) }
+    val player = remember(path) {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(mediaItem)
+            repeatMode = Player.REPEAT_MODE_OFF
+            playWhenReady = autoPlay
+            prepare()
+        }
+    }
+    DisposableEffect(player) {
+        onDispose { player.release() }
+    }
+    AndroidView(
+        factory = { viewContext ->
+            PlayerView(viewContext).apply {
+                this.player = player
+                useController = true
+            }
+        },
+        update = { it.player = player },
+        modifier = modifier.background(Color.Black),
+    )
 }
 
 @Composable
@@ -2856,6 +3059,16 @@ private fun FeedItem(
                 fontSize = 14.sp,
                 modifier = Modifier.clickable { onOpenDetail(memory) },
             )
+            memory.localPlaybackPath?.let { path ->
+                LocalVideoPlayer(
+                    path = path,
+                    autoPlay = false,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(16f / 9f)
+                        .clip(MemTokens.shapes.lg),
+                )
+            }
             TagRow(memory.tags)
             DividerLine()
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {

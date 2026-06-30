@@ -50,6 +50,9 @@ model used by `mobile-agent`.
 - Images can be imported from the file picker or share sheet, copied into
   app-private storage, saved as durable image sources, and rendered locally in
   the library.
+- Videos can be imported from the file picker or share sheet, copied into
+  app-private storage, saved as durable local playback assets, played inline in
+  the feed, and opened in a fullscreen in-app player.
 - Auth-gated links are saved as first-class `needs_auth` sources with a clear
   detail callout and retry-public-extraction action.
 - `needs_auth` source detail can import a domain-scoped `cookies.txt` file,
@@ -109,20 +112,19 @@ The production direction is documented in:
 
 Immediate next steps:
 
-1. Add in-app local media playback for downloaded/authorized video assets.
-2. Add local thumbnail/file caching for durable assets.
-3. Expand source detail into full video/article/document layouts.
-4. Build collection detail screens and richer tag editing.
-5. Expand FTS indexing to transcript/caption chunks and richer ranking.
-6. Harden Instagram auth with session validation, expiry messaging, and
+1. Add local thumbnail generation/caching for imported and downloaded videos.
+2. Expand source detail into full video/article/document layouts.
+3. Build collection detail screens and richer tag editing.
+4. Expand FTS indexing to transcript/caption chunks and richer ranking.
+5. Harden Instagram auth with session validation, expiry messaging, and
    encrypted storage.
-7. Add OCR for scanned/image-only PDFs and imported images.
-8. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
+6. Add OCR for scanned/image-only PDFs and imported images.
+7. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
    libs and pass their paths to `yt-dlp` through `ffmpeg_location`.
-9. Move long downloads to user-initiated data transfer jobs and media processing
+8. Move long downloads to user-initiated data transfer jobs and media processing
    work to a foreground service with the `mediaProcessing` type.
-10. Add transcript/caption fetching behind an explicit rights confirmation.
-11. Add an embedding/index interface so every extracted record becomes a RAG
+9. Add transcript/caption fetching behind an explicit rights confirmation.
+10. Add an embedding/index interface so every extracted record becomes a RAG
    document with stable IDs, source URL, timestamp, title, tags, and transcript
    segments.
 

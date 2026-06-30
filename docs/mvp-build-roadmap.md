@@ -68,7 +68,9 @@ downloaded/local media is reserved for the upcoming in-app playback slice.
 The first source detail sheet is now in place, with summary, copyable source
 URL, asset/playback status, and playlist/tag actions.
 It now also surfaces stored author, duration, processing/auth state, and raw
-metadata JSON for source inspection.
+metadata JSON for source inspection. Local video import now stores durable
+playback assets and renders them inline in the Library feed, source detail, and
+a fullscreen in-app player.
 
 Deliverables:
 
@@ -85,7 +87,8 @@ Deliverables:
 - Add retry/cancel controls. Started.
 - Add durable organization. Started with tags, collections, and playlist
   membership.
-- Add durable assets. Started with remote thumbnail asset records.
+- Add durable assets. Started with remote thumbnail asset records and local
+  video playback assets.
 - Add source detail surface. Started with a shared detail sheet for saved
   sources, then expanded with richer stored metadata.
 
@@ -220,6 +223,11 @@ Exit criteria:
 
 Goal: support authorized offline media operations without turning the app into a
 downloader product.
+
+Status: started. Imported local videos are copied into app-private storage,
+stored as durable `playback` assets, rendered inline in the feed/source detail,
+and opened in a fullscreen Media3 player. This provides the playback test
+harness before yt-dlp download/save behavior is added.
 
 Deliverables:
 
