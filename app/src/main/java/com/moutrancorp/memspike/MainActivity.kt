@@ -170,6 +170,7 @@ import com.moutrancorp.memspike.data.IngestionJobEntity
 import com.moutrancorp.memspike.data.MemDatabase
 import com.moutrancorp.memspike.data.MemoryRepository
 import com.moutrancorp.memspike.data.MemoryState
+import com.moutrancorp.memspike.data.RagIndexHealth
 import com.moutrancorp.memspike.data.SearchResultData
 import com.moutrancorp.memspike.data.SourceEntity
 import com.moutrancorp.memspike.data.SourceSnapshot
@@ -370,6 +371,8 @@ private class MemAppState(
     var logOutput by mutableStateOf("Ready. Share or paste a link to extract metadata on-device.")
     var appearance by mutableStateOf(appearanceStore.load())
         private set
+    var ragIndexHealth by mutableStateOf<RagIndexHealth?>(null)
+        private set
 
     val jobs = mutableStateListOf<IngestionJobUi>()
     val memories = mutableStateListOf<MemoryUi>()
@@ -390,6 +393,7 @@ private class MemAppState(
                 searchResults.addAll(results.map { it.toSearchResultUi() })
             }
         }
+        refreshRagIndexHealth()
     }
 
     fun close() {
@@ -408,6 +412,12 @@ private class MemAppState(
     fun updateLibraryQuery(query: String) {
         libraryQuery = query
         libraryQueryFlow.value = query
+    }
+
+    fun refreshRagIndexHealth() {
+        scope.launch {
+            ragIndexHealth = repository.ragIndexHealth()
+        }
     }
 
     fun openCapture(initialText: String = "", autoExtract: Boolean = false) {
@@ -925,6 +935,7 @@ private class MemAppState(
         )
         collections.clear()
         collections.addAll(state.collections.map { it.toCollectionUi() })
+        refreshRagIndexHealth()
     }
 
     fun copyLog() {
@@ -2944,6 +2955,11 @@ private fun AppearanceSheet(state: MemAppState) {
                     if (index > 0) DividerLine()
                     AiPipelineStatusRow(status)
                 }
+                DividerLine()
+                RagIndexHealthPanel(
+                    health = state.ragIndexHealth,
+                    onRefresh = state::refreshRagIndexHealth,
+                )
             }
         }
         SettingsGroup("Auth") {
@@ -2957,6 +2973,64 @@ private fun AppearanceSheet(state: MemAppState) {
                 Text("Clear Instagram auth")
             }
         }
+    }
+}
+
+@Composable
+private fun RagIndexHealthPanel(
+    health: RagIndexHealth?,
+    onRefresh: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
+            Text(
+                "Index health",
+                color = MemTokens.colors.textPrimary,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedButton(onClick = onRefresh, shape = MemTokens.shapes.pill) {
+                Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
+                Text("Refresh")
+            }
+        }
+        if (health == null) {
+            Text("Loading index metrics...", color = MemTokens.colors.textSecondary, fontSize = 13.sp)
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
+                MetadataTiny("${health.sourceCount} sources")
+                MetadataTiny("${health.indexedChunkCount} chunks")
+                MetadataTiny("${health.embeddingCoveragePercent}% embedded")
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
+                MetadataTiny("${health.transcriptChunkCount} transcript")
+                MetadataTiny("${health.visualChunkCount} visual")
+                MetadataTiny("${health.timestampedChunkCount} timestamped")
+            }
+            IndexHealthRow("FTS rows", health.chunkSearchRowCount.toString())
+            IndexHealthRow("Caption tracks", health.captionTrackCount.toString())
+            IndexHealthRow("Visual observations", health.visualObservationCount.toString())
+            IndexHealthRow("Playback assets", health.playbackAssetCount.toString())
+            IndexHealthRow("Search logs", health.searchQueryCount.toString())
+            IndexHealthRow("Agent actions", health.agentActionCount.toString())
+            if (health.warnings.isNotEmpty()) {
+                Text(
+                    text = "Warnings: ${health.warnings.joinToString("; ")}",
+                    color = MemTokens.colors.textSecondary,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun IndexHealthRow(label: String, value: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, color = MemTokens.colors.textSecondary, fontSize = 12.sp, modifier = Modifier.weight(1f))
+        Text(value, color = MemTokens.colors.textPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 

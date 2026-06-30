@@ -46,6 +46,32 @@ class MemoryRepository(private val database: MemDatabase) {
         return AgentToolResult(call = call, resultJson = result.toString())
     }
 
+    suspend fun ragIndexHealth(): RagIndexHealth {
+        val sourceCount = database.sourceDao().countAll()
+        val chunkCount = database.documentChunkDao().countAll()
+        val embeddedChunkCount = database.chunkEmbeddingDao().countByType("text")
+        val coverage = if (chunkCount == 0) 0f else embeddedChunkCount.toFloat() / chunkCount.toFloat()
+        return RagIndexHealth(
+            sourceCount = sourceCount,
+            needsAuthSourceCount = database.sourceDao().countNeedsAuth(),
+            indexedChunkCount = chunkCount,
+            chunkSearchRowCount = database.chunkSearchDao().countAll(),
+            transcriptChunkCount = database.documentChunkDao().countByType("transcript"),
+            articleChunkCount = database.documentChunkDao().countByType("article"),
+            documentChunkCount = database.documentChunkDao().countByType("document"),
+            noteChunkCount = database.documentChunkDao().countByType("note"),
+            visualChunkCount = database.documentChunkDao().countByType("visual"),
+            timestampedChunkCount = database.documentChunkDao().countTimestamped(),
+            captionTrackCount = database.captionTrackDao().countAll(),
+            visualObservationCount = database.visualObservationDao().countAll(),
+            embeddedChunkCount = embeddedChunkCount,
+            embeddingCoverage = coverage,
+            playbackAssetCount = database.assetDao().countByRole("playback"),
+            searchQueryCount = database.searchQueryDao().countAll(),
+            agentActionCount = database.agentActionDao().countAll(),
+        )
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     fun observeMemoryState(query: Flow<String>): Flow<MemoryState> {
         val sourceFlow = query
@@ -922,6 +948,37 @@ data class MemoryState(
     val collections: List<CollectionSummary>,
     val assets: List<AssetEntity>,
 )
+
+data class RagIndexHealth(
+    val sourceCount: Int,
+    val needsAuthSourceCount: Int,
+    val indexedChunkCount: Int,
+    val chunkSearchRowCount: Int,
+    val transcriptChunkCount: Int,
+    val articleChunkCount: Int,
+    val documentChunkCount: Int,
+    val noteChunkCount: Int,
+    val visualChunkCount: Int,
+    val timestampedChunkCount: Int,
+    val captionTrackCount: Int,
+    val visualObservationCount: Int,
+    val embeddedChunkCount: Int,
+    val embeddingCoverage: Float,
+    val playbackAssetCount: Int,
+    val searchQueryCount: Int,
+    val agentActionCount: Int,
+) {
+    val embeddingCoveragePercent: Int
+        get() = (embeddingCoverage * 100f).toInt().coerceIn(0, 100)
+
+    val warnings: List<String>
+        get() = buildList {
+            if (sourceCount > 0 && indexedChunkCount == 0) add("No indexed chunks yet")
+            if (indexedChunkCount > 0 && embeddingCoverage < 0.95f) add("Embedding coverage below 95%")
+            if (playbackAssetCount > 0 && visualObservationCount == 0) add("Playable videos have no visual observations")
+            if (needsAuthSourceCount > 0) add("$needsAuthSourceCount auth-gated source${if (needsAuthSourceCount == 1) "" else "s"}")
+        }
+}
 
 data class QueuedSource(
     val sourceId: String,

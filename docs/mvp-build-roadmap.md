@@ -308,8 +308,11 @@ Exit criteria:
    chunk embeddings, a local deterministic semantic fallback, and hybrid
    keyword/semantic result fusion. The app now has an AI/RAG provider registry
    and settings status surface for embeddings, vector retrieval, agent runtime,
-   and visual understanding. A production local/cloud embedding provider and
-   approximate vector index remain.
+   and visual understanding. The settings surface now also reports RAG index
+   health: source count, chunk depth, FTS rows, transcript/visual/timestamped
+   chunks, caption tracks, embedding coverage, visual observations, search
+   logs, and agent action counts. A production local/cloud embedding provider
+   and approximate vector index remain.
 6. Implement the first agent tool set: search memory, get source/chunks, and
    draft collection/playlist actions with preview/undo. Started with
    search-generated collection drafts backed by `agent_actions`, preview,

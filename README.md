@@ -151,7 +151,8 @@ Immediate next steps:
    tool execution. Room now persists chunk embeddings and runs a local
    deterministic exact-scan semantic fallback, with hybrid keyword/semantic
    fusion in cited search results. The app now exposes the active AI/RAG
-   pipeline status in settings so local fallbacks and future production
+   pipeline status and RAG index health in settings so local fallbacks,
+   embedding coverage, chunk depth, visual observations, and future production
    providers are visible instead of implicit.
 6. Add the first agent search tool with cited results and action previews.
    Started with a local agent search panel that summarizes grounded citations

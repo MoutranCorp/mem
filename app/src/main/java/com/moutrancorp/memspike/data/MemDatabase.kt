@@ -453,6 +453,12 @@ interface SourceDao {
     @Query("SELECT * FROM sources WHERE id = :sourceId LIMIT 1")
     suspend fun findById(sourceId: String): SourceEntity?
 
+    @Query("SELECT COUNT(*) FROM sources")
+    suspend fun countAll(): Int
+
+    @Query("SELECT COUNT(*) FROM sources WHERE processingState = 'needs_auth' OR authState = 'needs_auth'")
+    suspend fun countNeedsAuth(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(source: SourceEntity)
 
@@ -488,6 +494,15 @@ interface DocumentChunkDao {
 
     @Query("SELECT * FROM document_chunks WHERE sourceId = :sourceId AND chunkType = :chunkType")
     suspend fun findBySourceAndType(sourceId: String, chunkType: String): List<DocumentChunkEntity>
+
+    @Query("SELECT COUNT(*) FROM document_chunks")
+    suspend fun countAll(): Int
+
+    @Query("SELECT COUNT(*) FROM document_chunks WHERE chunkType = :chunkType")
+    suspend fun countByType(chunkType: String): Int
+
+    @Query("SELECT COUNT(*) FROM document_chunks WHERE startTimeMs IS NOT NULL")
+    suspend fun countTimestamped(): Int
 }
 
 @Dao
@@ -500,6 +515,9 @@ interface AssetDao {
 
     @Query("SELECT * FROM assets WHERE sourceId = :sourceId")
     suspend fun findBySource(sourceId: String): List<AssetEntity>
+
+    @Query("SELECT COUNT(*) FROM assets WHERE role = :role")
+    suspend fun countByRole(role: String): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(asset: AssetEntity)
@@ -524,6 +542,9 @@ interface ChunkSearchDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: ChunkSearchEntity)
+
+    @Query("SELECT COUNT(*) FROM chunk_search")
+    suspend fun countAll(): Int
 
     @Query(
         """
@@ -570,6 +591,9 @@ interface CaptionTrackDao {
     @Query("SELECT * FROM caption_tracks WHERE sourceId = :sourceId ORDER BY createdAt DESC")
     suspend fun findBySource(sourceId: String): List<CaptionTrackEntity>
 
+    @Query("SELECT COUNT(*) FROM caption_tracks")
+    suspend fun countAll(): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(track: CaptionTrackEntity)
 }
@@ -590,6 +614,9 @@ interface ChunkEmbeddingDao {
 
     @Query("DELETE FROM chunk_embeddings WHERE chunkId = :chunkId")
     suspend fun deleteForChunk(chunkId: String)
+
+    @Query("SELECT COUNT(*) FROM chunk_embeddings WHERE embeddingType = :embeddingType")
+    suspend fun countByType(embeddingType: String): Int
 
     @Query(
         """
@@ -621,12 +648,18 @@ interface VisualObservationDao {
 
     @Query("SELECT * FROM visual_observations WHERE sourceId = :sourceId ORDER BY COALESCE(startTimeMs, 0)")
     suspend fun findBySource(sourceId: String): List<VisualObservationEntity>
+
+    @Query("SELECT COUNT(*) FROM visual_observations")
+    suspend fun countAll(): Int
 }
 
 @Dao
 interface SearchQueryDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(query: SearchQueryEntity)
+
+    @Query("SELECT COUNT(*) FROM search_queries")
+    suspend fun countAll(): Int
 }
 
 @Dao
@@ -636,6 +669,9 @@ interface AgentActionDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(action: AgentActionEntity)
+
+    @Query("SELECT COUNT(*) FROM agent_actions")
+    suspend fun countAll(): Int
 }
 
 @Dao
