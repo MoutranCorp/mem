@@ -6,6 +6,7 @@ updated only through Play.
 
 Companion planning docs:
 
+- `docs/current-status-and-handoff.md`
 - `docs/mvp-product-spec.md`
 - `docs/technical-architecture.md`
 - `docs/design-direction.md`
@@ -99,6 +100,10 @@ Goal: thousands of saved links stay fast.
 - Store source IDs and offsets in every chunk so the agent can jump to the right
   saved item.
 - Benchmark 1k, 10k, and 50k source records on a midrange phone.
+- Keep index corruption non-fatal. FTS/vector rows must be repaired or excluded
+  when their owning source/chunk has been deleted or reprocessed.
+- Keep Android crash repros in `docs/android-e2e-testing.md` and
+  `tools/android-e2e.ps1` as first-class acceptance tests.
 
 ## Spike 4: Agent Actions
 

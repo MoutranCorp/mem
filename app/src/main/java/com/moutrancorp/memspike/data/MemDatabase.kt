@@ -654,7 +654,7 @@ interface ChunkSearchDao {
                document_chunks.endTimeMs AS endTimeMs, sources.savedAt AS savedAt
         FROM chunk_search
         INNER JOIN sources ON sources.id = chunk_search.sourceId
-        LEFT JOIN document_chunks ON document_chunks.id = chunk_search.chunkId
+        INNER JOIN document_chunks ON document_chunks.id = chunk_search.chunkId
         WHERE chunk_search MATCH :query
         ORDER BY sources.savedAt DESC
         LIMIT :limit
@@ -674,7 +674,7 @@ interface ChunkSearchDao {
                document_chunks.endTimeMs AS endTimeMs, sources.savedAt AS savedAt
         FROM chunk_search
         INNER JOIN sources ON sources.id = chunk_search.sourceId
-        LEFT JOIN document_chunks ON document_chunks.id = chunk_search.chunkId
+        INNER JOIN document_chunks ON document_chunks.id = chunk_search.chunkId
         WHERE chunk_search MATCH :query
         ORDER BY sources.savedAt DESC
         LIMIT :limit

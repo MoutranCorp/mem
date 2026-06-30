@@ -36,6 +36,11 @@ Persistence:
   debug bundles.
 - SAF/MediaStore only for explicit user export/import.
 
+Current implementation note: Room code generation uses KSP, not KAPT. The local
+Windows/JDK build environment repeatedly hit generated KAPT file access errors,
+so reverting to KAPT is a regression unless Android E2E and clean APK builds
+are proven afterward.
+
 Background work:
 
 - WorkManager for short/deferrable indexing and enrichment.
@@ -237,6 +242,19 @@ Index layers:
 - Optional vector index for semantic retrieval.
 - Ranking function that mixes FTS score, semantic score, recency, source quality,
   collection/tag boosts, and exact-entity matches.
+
+Index integrity rules:
+
+- Search queries must not materialize chunks unless the source/chunk rows still
+  exist. Use inner joins or explicit existence checks when joining FTS rows to
+  app-owned tables.
+- Deletion and reprocessing must clean or repair FTS rows, embeddings, visual
+  observations, and assets for removed sources.
+- Startup or migration maintenance should eventually remove orphan
+  `chunk_search` rows. The 2026-06-30 downloaded-video search crash was caused
+  by an orphan/stale FTS row reaching Room as a null non-null field.
+- Search results should degrade by excluding corrupt index rows, not by
+  crashing the Library UI.
 
 Chunking:
 

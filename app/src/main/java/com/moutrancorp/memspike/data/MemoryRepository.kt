@@ -58,6 +58,106 @@ class MemoryRepository(private val database: MemDatabase) {
         )
     }
 
+    suspend fun seedDownloadedYoutubeSearchCrashFixture(
+        localPlaybackPath: String,
+        thumbnailPath: String?,
+    ): DebugSearchFixture {
+        val now = System.currentTimeMillis()
+        val sourceId = "debug-downloaded-youtube-search-crash"
+        val searchQuery = "hermetic searchcrash"
+        val transcript = "This downloaded YouTube fixture contains a hermetic searchcrash phrase used to reproduce local playback search crashes."
+        val source = SourceEntity(
+            id = sourceId,
+            canonicalUrl = "https://www.youtube.com/watch?v=mem-debug-search-crash",
+            originalUrl = "https://www.youtube.com/watch?v=mem-debug-search-crash",
+            sourceType = "video",
+            originDomain = "youtube.com",
+            title = "Downloaded YouTube search crash fixture",
+            author = "Mem debug",
+            summary = "Debug fixture for searching a downloaded YouTube video with local playback attached.",
+            thumbnailUrl = null,
+            durationSeconds = 42,
+            savedAt = now,
+            updatedAt = now,
+            rightsState = "user_owned",
+            authState = "authorized",
+            processingState = "done",
+            rawMetadataJson = JSONObject()
+                .put("ok", true)
+                .put("sourceType", "video")
+                .put("extractor", "debug_seed")
+                .put("title", "Downloaded YouTube search crash fixture")
+                .put("webpage_url", "https://www.youtube.com/watch?v=mem-debug-search-crash")
+                .toString(),
+        )
+        database.sourceDao().upsert(source)
+        database.assetDao().upsert(
+            AssetEntity(
+                id = stableId("asset:$sourceId:playback"),
+                sourceId = sourceId,
+                assetType = "video",
+                role = "playback",
+                remoteUrl = null,
+                localPath = localPlaybackPath,
+                mimeType = "video/mp4",
+                width = null,
+                height = null,
+                durationMs = 42_000,
+                createdAt = now,
+            ),
+        )
+        thumbnailPath?.takeIf { it.isNotBlank() }?.let { path ->
+            database.assetDao().upsert(
+                AssetEntity(
+                    id = stableId("asset:$sourceId:thumbnail"),
+                    sourceId = sourceId,
+                    assetType = "image",
+                    role = "thumbnail",
+                    remoteUrl = null,
+                    localPath = path,
+                    mimeType = "image/jpeg",
+                    width = null,
+                    height = null,
+                    durationMs = null,
+                    createdAt = now,
+                ),
+            )
+        }
+        database.captionTrackDao().upsert(
+            CaptionTrackEntity(
+                id = stableId("caption:$sourceId:debug"),
+                sourceId = sourceId,
+                language = "en",
+                source = "debug_seed",
+                format = "text",
+                segmentCount = 1,
+                chunkCount = 1,
+                createdAt = now,
+            ),
+        )
+        val indexedText = storeChunks(
+            source = source,
+            chunks = listOf(
+                ExtractedContentChunk(
+                    text = transcript,
+                    chunkType = "transcript",
+                    language = "en",
+                    startOffset = null,
+                    endOffset = null,
+                    startTimeMs = 1_000,
+                    endTimeMs = 8_000,
+                    page = null,
+                    sectionTitle = "Debug transcript",
+                    provider = "debug_seed",
+                ),
+            ),
+            now = now,
+        )
+        ensureTags(sourceId, listOf("video", "youtube", "downloaded", "playable", "debug"))
+        indexSource(source, indexedText)
+        return DebugSearchFixture(sourceId = sourceId, searchQuery = searchQuery)
+    }
+
     suspend fun runMemoryTool(call: AgentToolCall): AgentToolResult {
         val args = runCatching { JSONObject(call.argumentsJson) }.getOrElse { JSONObject() }
         val result = when (call.name) {
@@ -1408,6 +1508,11 @@ data class RagIndexHealth(
 data class QueuedSource(
     val sourceId: String,
     val jobId: String,
+)
+
+data class DebugSearchFixture(
+    val sourceId: String,
+    val searchQuery: String,
 )
 
 data class ExtractedSourceData(

@@ -6,6 +6,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.database.Cursor
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
@@ -139,6 +140,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -190,6 +192,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.PrintWriter
+import java.io.StringWriter
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -197,6 +201,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var appState: MemAppState
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        CrashReporter.install(this)
         super.onCreate(savedInstanceState)
         appState = MemAppState(
             context = this,
@@ -207,13 +212,22 @@ class MainActivity : ComponentActivity() {
         setContent {
             MemApp(appState)
         }
+        handleDebugIntent(intent)
         handleShareIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        handleDebugIntent(intent)
         handleShareIntent(intent)
+    }
+
+    private fun handleDebugIntent(intent: Intent?) {
+        if (!isDebuggable()) return
+        if (intent?.getStringExtra(DEBUG_SEED_EXTRA) == DEBUG_SEED_DOWNLOADED_YOUTUBE_SEARCH) {
+            appState.seedDownloadedYoutubeSearchCrashFixture()
+        }
     }
 
     private fun handleShareIntent(intent: Intent?) {
@@ -233,6 +247,41 @@ class MainActivity : ComponentActivity() {
         appState.close()
         super.onDestroy()
     }
+}
+
+private const val DEBUG_SEED_EXTRA = "mem_seed"
+private const val DEBUG_SEED_DOWNLOADED_YOUTUBE_SEARCH = "downloaded_youtube_search_crash"
+private const val CRASH_REPORT_FILE = "last_crash.txt"
+
+private object CrashReporter {
+    fun install(context: Context) {
+        if (!context.isDebuggable()) return
+        val appContext = context.applicationContext
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            runCatching {
+                val stack = StringWriter().also { writer ->
+                    PrintWriter(writer).use { printer ->
+                        printer.println("Thread: ${thread.name}")
+                        printer.println("Time: ${System.currentTimeMillis()}")
+                        throwable.printStackTrace(printer)
+                    }
+                }.toString()
+                File(appContext.filesDir, CRASH_REPORT_FILE).writeText(stack)
+            }
+            previous?.uncaughtException(thread, throwable)
+        }
+    }
+}
+
+private fun Context.lastCrashReport(): String? {
+    if (!isDebuggable()) return null
+    val file = File(filesDir, CRASH_REPORT_FILE)
+    return file.takeIf { it.exists() }?.readText()?.takeIf { it.isNotBlank() }
+}
+
+private fun Context.isDebuggable(): Boolean {
+    return (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
 }
 
 private fun Intent.streamUri(): Uri? {
@@ -372,7 +421,10 @@ private class MemAppState(
     var agentAnswer by mutableStateOf<AgentAnswerUi?>(null)
         private set
     var isExtracting by mutableStateOf(false)
-    var logOutput by mutableStateOf("Ready. Share or paste a link to extract metadata on-device.")
+    var logOutput by mutableStateOf(
+        context.lastCrashReport()?.let { "Last crash captured:\n\n$it" }
+            ?: "Ready. Share or paste a link to extract metadata on-device.",
+    )
     var appearance by mutableStateOf(appearanceStore.load())
         private set
     var ragIndexHealth by mutableStateOf<RagIndexHealth?>(null)
@@ -441,6 +493,28 @@ private class MemAppState(
                     agentAnswer = answer
                 }
             }
+        }
+    }
+
+    fun seedDownloadedYoutubeSearchCrashFixture() {
+        scope.launch {
+            val fixture = withContext(Dispatchers.IO) {
+                val fixtureDir = File(context.filesDir, "debug-fixtures").apply { mkdirs() }
+                val video = File(fixtureDir, "downloaded-youtube-search-crash.mp4").apply {
+                    if (!exists()) writeBytes(ByteArray(16) { index -> index.toByte() })
+                }
+                val thumbnail = File(fixtureDir, "downloaded-youtube-search-crash.jpg").apply {
+                    if (!exists()) writeBytes(ByteArray(16) { index -> (255 - index).toByte() })
+                }
+                repository.seedDownloadedYoutubeSearchCrashFixture(
+                    localPlaybackPath = video.absolutePath,
+                    thumbnailPath = thumbnail.absolutePath,
+                )
+            }
+            selectedTab = MainTab.Library
+            updateLibraryMode(LibraryMode.Feed)
+            updateLibraryQuery(fixture.searchQuery)
+            logOutput = "Seeded downloaded-video search crash fixture: ${fixture.sourceId}\nSearch: ${fixture.searchQuery}"
         }
     }
 
@@ -2482,6 +2556,7 @@ private fun LibraryScreen(state: MemAppState) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .testTag("library-screen")
             .statusBarsPadding()
             .padding(
                 start = MemTokens.spacing.md,
@@ -4103,6 +4178,7 @@ private fun SearchFilterRow(query: String, onQueryChange: (String) -> Unit) {
                 cursorBrush = SolidColor(MemTokens.colors.accent),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .testTag("library-search-field")
                     .padding(horizontal = MemTokens.spacing.md, vertical = MemTokens.spacing.sm),
                 decorationBox = { innerTextField ->
                     Row(verticalAlignment = Alignment.CenterVertically) {

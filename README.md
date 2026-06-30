@@ -83,6 +83,10 @@ user-owned files into a memory index.
 
 ## Build
 
+Current handoff status, verified APK details, and exact regression notes are in
+`docs/current-status-and-handoff.md`. New agents should read that file before
+changing code.
+
 ```powershell
 .\gradlew.bat :app:assembleDebug
 ```
@@ -112,6 +116,7 @@ fallback.
 
 The production direction is documented in:
 
+- `docs/current-status-and-handoff.md`
 - `docs/mvp-product-spec.md`
 - `docs/technical-architecture.md`
 - `docs/design-direction.md`
@@ -122,6 +127,14 @@ The production direction is documented in:
 
 Immediate next steps:
 
+0. Stabilize Android E2E coverage around the real crash cases.
+   The latest fixed regression was a downloaded YouTube/local playback memory
+   crashing search when a matching downloaded video was returned. The exact
+   field repro was searching `Go` for a downloaded video titled with `Gouie`.
+   The fix changed chunk FTS joins from `LEFT JOIN` to `INNER JOIN` so orphan
+   FTS rows cannot construct invalid `ChunkSearchResult` objects. Keep
+   `docs/android-e2e-testing.md` and `docs/current-status-and-handoff.md`
+   current as new crash repros are found.
 1. Add transcript/caption extraction through yt-dlp without downloading media.
    Started with subtitle URL selection, WebVTT/SRT/JSON3 parsing, and
    transcript chunks returned by the packaged extractor.
@@ -194,12 +207,15 @@ Immediate next steps:
    filters, visual placeholder honesty, agentic collection seeds, and the
    first agent tool contracts for transcript, visual, and result-explanation
    payloads.
-9. Harden Instagram auth with session validation, expiry messaging, and
+9. Repair and harden FTS/index consistency with orphan-row cleanup, migration
+   or startup maintenance, and focused tests for deletion and local media
+   indexing.
+10. Harden Instagram auth with session validation, expiry messaging, and
    encrypted storage.
-10. Add OCR for scanned/image-only PDFs and imported images.
-11. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
+11. Add OCR for scanned/image-only PDFs and imported images.
+12. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
    libs and pass their paths to `yt-dlp` through `ffmpeg_location`.
-12. Move long downloads to user-initiated data transfer jobs and media processing
+13. Move long downloads to user-initiated data transfer jobs and media processing
    work to a foreground service with the `mediaProcessing` type.
 
 ## Play Store Guardrails

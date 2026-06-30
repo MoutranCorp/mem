@@ -1,8 +1,11 @@
 # Mem MVP Build Roadmap
 
 This roadmap assumes quality matters more than development speed. The goal is to
-move from the current Java spike to a production-grade native Android app while
+move from the current spike to a production-grade native Android app while
 preserving the proven on-device yt-dlp extraction path.
+
+For the latest verified APK, crash-fix context, exact test notes, and workspace
+hygiene rules, read `docs/current-status-and-handoff.md` first.
 
 ## Phase 0: Preserve The Spike
 
@@ -180,6 +183,13 @@ Exit criteria:
 
 Goal: make "ask/find anything" fast and reliable.
 
+Status: started. The app now has transcript/article chunk indexing, chunk-level
+FTS, deterministic query filters, a local semantic fallback behind provider
+interfaces, RAG index health diagnostics, and a deterministic local agent
+runtime scaffold. The latest critical fix changed chunk search from orphan-prone
+`LEFT JOIN` queries to `INNER JOIN` queries so stale `chunk_search` rows cannot
+crash search results for downloaded/local video memories.
+
 The detailed technical path is captured in
 `docs/rag-agent-spike-2026-06-30.md`. The important correction is that video
 RAG must start with transcripts/captions, but use cases like "videos where
@@ -203,6 +213,10 @@ Exit criteria:
 - Search works under the performance targets in `docs/mvp-product-spec.md`.
 - A vague query finds the right saved sources.
 - Results can jump to exact source detail and timestamp/page/offset.
+- Search result UI still presents actual memories, not only technical chunk
+  cards, and the agent/search panel cannot block Library scrolling.
+- Orphaned or stale FTS/index rows are repaired automatically or excluded
+  safely.
 
 ## Phase 6: Agent Actions
 
@@ -283,6 +297,13 @@ Exit criteria:
 
 ## Immediate Next Build Sequence
 
+0. Harden the Android regression harness and index integrity.
+   The exact fixed crash case was: add/download a YouTube video whose title
+   includes `Gouie`, search `Go`, and the app crashed when a downloaded video
+   search result hit an orphan chunk FTS row. The current fix excludes orphan
+   rows with `INNER JOIN`; the next reliability slice should add cleanup/repair
+   for stale `chunk_search` rows and make this repro fully automated in
+   `tools/android-e2e.ps1`.
 1. Finish transcript/caption extraction and parsing into timestamped chunks.
    Started with yt-dlp subtitle URL selection, WebVTT/SRT/JSON3 parsing, and
    durable transcript chunk indexing.
@@ -348,3 +369,7 @@ Exit criteria:
    event queries that transcripts cannot cover. Started with local frame-sample
    observations for playable videos, indexed as `visual` chunks. A real
    model-backed scene/action/OCR analyzer remains.
+8. Package media processing properly for production.
+   Add real per-ABI `ffmpeg`/`ffprobe`, third-party notices, storage
+   management, cancel/retry, and Android-visible long-running job/foreground
+   service behavior before expanding authorized save flows.
