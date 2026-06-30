@@ -7,14 +7,19 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.database.Cursor
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.view.View
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -75,7 +80,9 @@ import androidx.compose.material.icons.rounded.Inbox
 import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.MoreHoriz
+import androidx.compose.material.icons.rounded.OpenInBrowser
 import androidx.compose.material.icons.rounded.PlayCircle
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Settings
@@ -2294,6 +2301,13 @@ private fun SourceDetailSheet(
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
+    val externalContext = LocalContext.current
+    var webView by remember { mutableStateOf<WebView?>(null) }
+    var loadStatus by remember { mutableStateOf("Loading Instagram...") }
+    var loadProgress by remember { mutableStateOf(0) }
+    var loadError by remember { mutableStateOf<String?>(null) }
+    val loginUrl = "https://www.instagram.com/accounts/login/"
+
     Surface(
         modifier = Modifier
             .fillMaxSize()
@@ -2315,17 +2329,88 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
                 }
                 MemIconButton(Icons.Rounded.Close, "Close", onClose)
             }
+            SurfaceCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = MemTokens.spacing.md),
+                container = MemTokens.colors.surfaceMuted,
+                border = BorderStroke(1.dp, MemTokens.colors.borderSubtle),
+            ) {
+                Column(
+                    modifier = Modifier.padding(MemTokens.spacing.sm),
+                    verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = loadError ?: "$loadStatus ${loadProgress.coerceIn(0, 100)}%",
+                            color = if (loadError == null) MemTokens.colors.textSecondary else MemTokens.colors.danger,
+                            fontSize = 12.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                        MemIconButton(Icons.Rounded.Refresh, "Reload") {
+                            loadError = null
+                            loadStatus = "Reloading Instagram..."
+                            webView?.loadUrl(loginUrl)
+                        }
+                        MemIconButton(Icons.Rounded.OpenInBrowser, "Open in browser") {
+                            runCatching {
+                                externalContext.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(loginUrl)))
+                            }
+                        }
+                    }
+                    Text(
+                        "If this stays blank, use Open in browser to confirm Instagram is reachable on this phone.",
+                        color = MemTokens.colors.textTertiary,
+                        fontSize = 11.sp,
+                    )
+                }
+            }
             AndroidView(
                 factory = { context ->
                     WebView(context).apply {
+                        webView = this
+                        setBackgroundColor(android.graphics.Color.WHITE)
+                        setLayerType(View.LAYER_TYPE_HARDWARE, null)
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
+                        settings.databaseEnabled = true
+                        settings.loadsImagesAutomatically = true
+                        settings.javaScriptCanOpenWindowsAutomatically = true
+                        settings.useWideViewPort = true
+                        settings.loadWithOverviewMode = true
+                        settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                        settings.userAgentString =
+                            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                        webChromeClient = object : WebChromeClient() {
+                            override fun onProgressChanged(view: WebView, newProgress: Int) {
+                                loadProgress = newProgress
+                                if (newProgress >= 100 && loadError == null) {
+                                    loadStatus = "Instagram loaded."
+                                }
+                            }
+                        }
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = false
+                            override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
+                                loadError = null
+                                loadStatus = "Loading ${url ?: "Instagram"}"
+                            }
+
+                            override fun onPageFinished(view: WebView, url: String?) {
+                                if (loadError == null) {
+                                    loadStatus = "Loaded ${url ?: "Instagram"}"
+                                }
+                            }
+
+                            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                                if (request.isForMainFrame) {
+                                    loadError = "WebView error ${error.errorCode}: ${error.description}"
+                                }
+                            }
                         }
-                        loadUrl("https://www.instagram.com/accounts/login/")
+                        loadUrl(loginUrl)
                     }
                 },
                 modifier = Modifier

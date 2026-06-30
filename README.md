@@ -60,6 +60,9 @@ model used by `mobile-agent`.
   import and WebView login paths can be retested.
 - The always-reachable appearance/settings sheet can clear Instagram auth even
   when the current session is already working.
+- Instagram login WebView includes loading/error diagnostics, reload, browser
+  reachability check, explicit hardware acceleration, and a mobile Chrome user
+  agent for better compatibility.
 
 The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and

@@ -124,7 +124,9 @@ login WebView, save the resulting session into the same auth session store, and
 retry extraction without asking the user to manually export cookies. The source
 detail auth callout can also clear the saved domain auth session for retesting
 or account switching, and the always-reachable settings sheet can clear
-Instagram auth when the current session is already working.
+Instagram auth when the current session is already working. The Instagram login
+WebView now exposes loading/error diagnostics and reload/browser controls to
+separate WebView rendering failures from Instagram auth failures.
 
 Deliverables:
 
