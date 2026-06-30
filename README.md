@@ -1,7 +1,8 @@
-# Mem Spike
+# Mem
 
-This is a Play-targeted Android spike for running `yt-dlp` directly on the
-phone without the Debian/proot model used by `mobile-agent`.
+This is a Play-targeted Android app prototype for Mem, a private memory hub
+which runs packaged `yt-dlp` directly on the phone without the Debian/proot
+model used by `mobile-agent`.
 
 ## What This Proves
 
@@ -12,8 +13,14 @@ phone without the Debian/proot model used by `mobile-agent`.
 - Pinned, packaged `yt-dlp==2026.6.9`.
 - On-device metadata extraction with `download=False`.
 - A compact JSON result shaped for a future RAG ingestion pipeline.
+- Kotlin/Compose app shell.
+- Tokenized Mem theme layer with user-selectable profiles, mode, density,
+  corner style, and dock style.
+- Mem home, floating dock, capture sheet, inbox/logs, and library feed/grid/
+  timeline shell.
+- Library mode is persisted and restored.
 
-The spike deliberately does not advertise or perform video downloads. The first
+The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and
 user-owned files into a memory index.
 
@@ -28,7 +35,7 @@ The app builds against the Android SDK at `C:\src\androidsdk`.
 ## Run
 
 Install the debug APK on a connected device, then paste a URL or share text to
-`Mem Spike`.
+`Mem`.
 
 ```powershell
 C:\src\androidsdk\platform-tools\adb.exe install -r app\build\outputs\apk\debug\app-debug.apk
@@ -42,11 +49,22 @@ works. The Play-safe version should not scrape browser cookies silently; the
 next auth spike should evaluate explicit user-imported cookies or a source-level
 login flow.
 
-## Next Spikes
+## Next Work
 
-1. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
+The production direction is documented in:
+
+- `docs/mvp-product-spec.md`
+- `docs/technical-architecture.md`
+- `docs/design-direction.md`
+- `docs/design-system-customization.md`
+- `docs/mvp-build-roadmap.md`
+
+Immediate next steps:
+
+1. Add Room and convert the in-memory Capture/Inbox state into durable source
+   and ingestion-job records.
+2. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
    libs and pass their paths to `yt-dlp` through `ffmpeg_location`.
-2. Add a persistent Room job queue with cancel/retry/resume.
 3. Move long downloads to user-initiated data transfer jobs and media processing
    work to a foreground service with the `mediaProcessing` type.
 4. Add transcript/caption fetching behind an explicit rights confirmation.
