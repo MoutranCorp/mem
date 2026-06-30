@@ -1,5 +1,59 @@
 package com.moutrancorp.memspike.ai
 
+enum class AiCapabilityStatus {
+    Active,
+    Fallback,
+    Planned,
+}
+
+data class AiPipelineStatus(
+    val capability: String,
+    val activeProvider: String,
+    val activeModel: String,
+    val status: AiCapabilityStatus,
+    val privacy: String,
+    val notes: String,
+)
+
+object DefaultAiProviderRegistry {
+    fun statuses(): List<AiPipelineStatus> {
+        return listOf(
+            AiPipelineStatus(
+                capability = "Text embeddings",
+                activeProvider = "local",
+                activeModel = "hash-v1-text-128",
+                status = AiCapabilityStatus.Fallback,
+                privacy = "On device",
+                notes = "Deterministic fallback for offline hybrid search; production semantic quality needs a real embedding model.",
+            ),
+            AiPipelineStatus(
+                capability = "Vector retrieval",
+                activeProvider = "room",
+                activeModel = "exact-scan",
+                status = AiCapabilityStatus.Fallback,
+                privacy = "On device",
+                notes = "Exact scan keeps the data model honest now; large libraries need an approximate vector index.",
+            ),
+            AiPipelineStatus(
+                capability = "Agent runtime",
+                activeProvider = "local",
+                activeModel = "tool-preview",
+                status = AiCapabilityStatus.Fallback,
+                privacy = "On device",
+                notes = "Current actions are deterministic previews; final Q&A and planning need a model-backed runtime.",
+            ),
+            AiPipelineStatus(
+                capability = "Visual understanding",
+                activeProvider = "local",
+                activeModel = "frame-sample-placeholders",
+                status = AiCapabilityStatus.Planned,
+                privacy = "On device",
+                notes = "Playable videos are indexed with timestamped frame samples; object/action/OCR labels need a vision model provider.",
+            ),
+        )
+    }
+}
+
 data class EmbeddingInput(
     val id: String,
     val text: String,
@@ -72,4 +126,3 @@ interface AgentRuntime {
         toolRunner: suspend (AgentToolCall) -> AgentToolResult,
     ): String
 }
-

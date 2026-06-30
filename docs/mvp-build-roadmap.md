@@ -302,8 +302,10 @@ Exit criteria:
 5. Implement the embedding provider and vector index interfaces with a first
    local/cloud provider behind user-visible settings. Started with persisted
    chunk embeddings, a local deterministic semantic fallback, and hybrid
-   keyword/semantic result fusion. A production local/cloud embedding provider
-   and approximate vector index remain.
+   keyword/semantic result fusion. The app now has an AI/RAG provider registry
+   and settings status surface for embeddings, vector retrieval, agent runtime,
+   and visual understanding. A production local/cloud embedding provider and
+   approximate vector index remain.
 6. Implement the first agent tool set: search memory, get source/chunks, and
    draft collection/playlist actions with preview/undo. Started with
    search-generated collection drafts backed by `agent_actions`, preview,

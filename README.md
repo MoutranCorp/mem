@@ -150,7 +150,9 @@ Immediate next steps:
    Started with provider interfaces for embeddings, vector search, and agent
    tool execution. Room now persists chunk embeddings and runs a local
    deterministic exact-scan semantic fallback, with hybrid keyword/semantic
-   fusion in cited search results.
+   fusion in cited search results. The app now exposes the active AI/RAG
+   pipeline status in settings so local fallbacks and future production
+   providers are visible instead of implicit.
 6. Add the first agent search tool with cited results and action previews.
    Started with a local agent search panel that summarizes grounded citations
    and can draft a collection from the cited source set. Collection drafts now

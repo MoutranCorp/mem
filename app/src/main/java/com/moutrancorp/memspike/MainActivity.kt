@@ -156,6 +156,9 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
+import com.moutrancorp.memspike.ai.AiCapabilityStatus
+import com.moutrancorp.memspike.ai.AiPipelineStatus
+import com.moutrancorp.memspike.ai.DefaultAiProviderRegistry
 import com.moutrancorp.memspike.data.AssetEntity
 import com.moutrancorp.memspike.data.CollectionSummary
 import com.moutrancorp.memspike.data.ContentChunkData
@@ -2925,6 +2928,14 @@ private fun AppearanceSheet(state: MemAppState) {
                 onChange = { state.updateAppearance(state.appearance.copy(seekForwardSeconds = it)) },
             )
         }
+        SettingsGroup("AI and RAG") {
+            Column(verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
+                DefaultAiProviderRegistry.statuses().forEachIndexed { index, status ->
+                    if (index > 0) DividerLine()
+                    AiPipelineStatusRow(status)
+                }
+            }
+        }
         SettingsGroup("Auth") {
             OutlinedButton(
                 onClick = state::clearInstagramAuth,
@@ -2936,6 +2947,37 @@ private fun AppearanceSheet(state: MemAppState) {
                 Text("Clear Instagram auth")
             }
         }
+    }
+}
+
+@Composable
+private fun AiPipelineStatusRow(status: AiPipelineStatus) {
+    val statusLabel = when (status.status) {
+        AiCapabilityStatus.Active -> "Active"
+        AiCapabilityStatus.Fallback -> "Fallback"
+        AiCapabilityStatus.Planned -> "Planned"
+    }
+    val statusColor = when (status.status) {
+        AiCapabilityStatus.Active -> MemTokens.colors.accent
+        AiCapabilityStatus.Fallback -> MemTokens.colors.textSecondary
+        AiCapabilityStatus.Planned -> MemTokens.colors.textTertiary
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
+            Text(
+                status.capability,
+                color = MemTokens.colors.textPrimary,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.weight(1f),
+            )
+            Text(statusLabel, color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
+            MetadataTiny(status.activeProvider)
+            MetadataTiny(status.activeModel)
+            MetadataTiny(status.privacy)
+        }
+        Text(status.notes, color = MemTokens.colors.textSecondary, fontSize = 13.sp, lineHeight = 18.sp)
     }
 }
 
