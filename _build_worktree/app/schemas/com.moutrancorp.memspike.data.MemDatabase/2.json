@@ -1,0 +1,407 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "fde44fe01fe53304f4dfd49ab8a44bee",
+    "entities": [
+      {
+        "tableName": "sources",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `canonicalUrl` TEXT NOT NULL, `originalUrl` TEXT NOT NULL, `sourceType` TEXT NOT NULL, `originDomain` TEXT, `title` TEXT NOT NULL, `author` TEXT, `summary` TEXT, `thumbnailUrl` TEXT, `durationSeconds` INTEGER, `savedAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `rightsState` TEXT NOT NULL, `authState` TEXT NOT NULL, `processingState` TEXT NOT NULL, `rawMetadataJson` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "canonicalUrl",
+            "columnName": "canonicalUrl",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "originalUrl",
+            "columnName": "originalUrl",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceType",
+            "columnName": "sourceType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "originDomain",
+            "columnName": "originDomain",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "author",
+            "columnName": "author",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "summary",
+            "columnName": "summary",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "thumbnailUrl",
+            "columnName": "thumbnailUrl",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "durationSeconds",
+            "columnName": "durationSeconds",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "savedAt",
+            "columnName": "savedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rightsState",
+            "columnName": "rightsState",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "authState",
+            "columnName": "authState",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "processingState",
+            "columnName": "processingState",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rawMetadataJson",
+            "columnName": "rawMetadataJson",
+            "affinity": "TEXT",
+            "notNull": false
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_sources_canonicalUrl",
+            "unique": true,
+            "columnNames": [
+              "canonicalUrl"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_sources_canonicalUrl` ON `${TABLE_NAME}` (`canonicalUrl`)"
+          },
+          {
+            "name": "index_sources_savedAt",
+            "unique": false,
+            "columnNames": [
+              "savedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_sources_savedAt` ON `${TABLE_NAME}` (`savedAt`)"
+          },
+          {
+            "name": "index_sources_processingState",
+            "unique": false,
+            "columnNames": [
+              "processingState"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_sources_processingState` ON `${TABLE_NAME}` (`processingState`)"
+          }
+        ],
+        "foreignKeys": []
+      },
+      {
+        "tableName": "ingestion_jobs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `sourceId` TEXT NOT NULL, `jobType` TEXT NOT NULL, `state` TEXT NOT NULL, `progress` REAL NOT NULL, `retryCount` INTEGER NOT NULL, `lastError` TEXT, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`sourceId`) REFERENCES `sources`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceId",
+            "columnName": "sourceId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "jobType",
+            "columnName": "jobType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "progress",
+            "columnName": "progress",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "retryCount",
+            "columnName": "retryCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastError",
+            "columnName": "lastError",
+            "affinity": "TEXT",
+            "notNull": false
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_ingestion_jobs_sourceId",
+            "unique": false,
+            "columnNames": [
+              "sourceId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_ingestion_jobs_sourceId` ON `${TABLE_NAME}` (`sourceId`)"
+          },
+          {
+            "name": "index_ingestion_jobs_state",
+            "unique": false,
+            "columnNames": [
+              "state"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_ingestion_jobs_state` ON `${TABLE_NAME}` (`state`)"
+          },
+          {
+            "name": "index_ingestion_jobs_updatedAt",
+            "unique": false,
+            "columnNames": [
+              "updatedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_ingestion_jobs_updatedAt` ON `${TABLE_NAME}` (`updatedAt`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "sources",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sourceId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "document_chunks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `sourceId` TEXT NOT NULL, `text` TEXT NOT NULL, `chunkType` TEXT NOT NULL, `startOffset` INTEGER, `endOffset` INTEGER, `startTimeMs` INTEGER, `endTimeMs` INTEGER, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`sourceId`) REFERENCES `sources`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceId",
+            "columnName": "sourceId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "text",
+            "columnName": "text",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chunkType",
+            "columnName": "chunkType",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startOffset",
+            "columnName": "startOffset",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "endOffset",
+            "columnName": "endOffset",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "startTimeMs",
+            "columnName": "startTimeMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "endTimeMs",
+            "columnName": "endTimeMs",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_document_chunks_sourceId",
+            "unique": false,
+            "columnNames": [
+              "sourceId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_document_chunks_sourceId` ON `${TABLE_NAME}` (`sourceId`)"
+          },
+          {
+            "name": "index_document_chunks_chunkType",
+            "unique": false,
+            "columnNames": [
+              "chunkType"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_document_chunks_chunkType` ON `${TABLE_NAME}` (`chunkType`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "sources",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sourceId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "ftsVersion": "FTS4",
+        "ftsOptions": {
+          "tokenizer": "simple",
+          "tokenizerArgs": [],
+          "contentTable": "",
+          "languageIdColumnName": "",
+          "matchInfo": "FTS4",
+          "notIndexedColumns": [],
+          "prefixSizes": [],
+          "preferredOrder": "ASC"
+        },
+        "contentSyncTriggers": [],
+        "tableName": "source_search",
+        "createSql": "CREATE VIRTUAL TABLE IF NOT EXISTS `${TABLE_NAME}` USING FTS4(`sourceId` TEXT NOT NULL, `title` TEXT NOT NULL, `body` TEXT NOT NULL, `tags` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "sourceId",
+            "columnName": "sourceId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "body",
+            "columnName": "body",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "tags",
+            "columnName": "tags",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": []
+        },
+        "indices": [],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'fde44fe01fe53304f4dfd49ab8a44bee')"
+    ]
+  }
+}

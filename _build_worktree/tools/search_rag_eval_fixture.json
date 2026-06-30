@@ -1,0 +1,413 @@
+{
+  "sources": [
+    {
+      "id": "yt_founder_distribution",
+      "title": "Founder Lessons Nobody Tells You",
+      "sourceType": "video",
+      "originDomain": "youtube.com",
+      "author": "Startup Lab",
+      "durationSeconds": 780,
+      "savedAt": "2026-06-20T12:00:00Z",
+      "assetRoles": ["thumbnail"]
+    },
+    {
+      "id": "yt_japan_food_short",
+      "title": "Tokyo Food And Transit Notes",
+      "sourceType": "video",
+      "originDomain": "youtube.com",
+      "author": "Travel Desk",
+      "durationSeconds": 240,
+      "savedAt": "2026-06-25T12:00:00Z",
+      "tags": ["travel", "japan"],
+      "collections": ["japan"],
+      "assetRoles": ["thumbnail"]
+    },
+    {
+      "id": "article_kyoto_hotels",
+      "title": "Quiet Kyoto Hotels Near Train Lines",
+      "sourceType": "article",
+      "originDomain": "example.com",
+      "author": "Mina Park",
+      "durationSeconds": null,
+      "savedAt": "2026-05-02T09:00:00Z",
+      "tags": ["travel", "japan"],
+      "collections": ["japan"]
+    },
+    {
+      "id": "note_japan_itinerary",
+      "title": "Japan Trip Notebook",
+      "sourceType": "note",
+      "originDomain": null,
+      "author": null,
+      "durationSeconds": null,
+      "savedAt": "2026-06-18T08:30:00Z",
+      "tags": ["travel", "japan", "planning"],
+      "collections": ["japan"]
+    },
+    {
+      "id": "pdf_ai_agents",
+      "title": "AI Agents Operating Manual",
+      "sourceType": "pdf",
+      "originDomain": null,
+      "author": "Mem Research",
+      "durationSeconds": null,
+      "savedAt": "2026-04-12T15:00:00Z",
+      "tags": ["research"],
+      "collections": ["ai research"]
+    },
+    {
+      "id": "instagram_needs_auth",
+      "title": "Instagram Reel Saved For Later",
+      "sourceType": "link",
+      "originDomain": "instagram.com",
+      "author": "private_creator",
+      "durationSeconds": null,
+      "savedAt": "2026-06-28T16:00:00Z"
+    },
+    {
+      "id": "local_gameplay_visual",
+      "title": "Imported Gameplay Clip",
+      "sourceType": "video",
+      "originDomain": null,
+      "author": null,
+      "durationSeconds": 45,
+      "savedAt": "2026-06-29T18:00:00Z",
+      "assetRoles": ["playback", "thumbnail"]
+    },
+    {
+      "id": "article_ignored_exact",
+      "title": "Exact Phrase Article",
+      "sourceType": "article",
+      "originDomain": "example.org",
+      "author": "Archive",
+      "durationSeconds": null,
+      "savedAt": "2026-03-10T10:00:00Z"
+    }
+  ],
+  "chunks": [
+    {
+      "id": "chunk_distribution_transcript",
+      "sourceId": "yt_founder_distribution",
+      "chunkType": "transcript",
+      "language": "en",
+      "startTimeMs": 93000,
+      "text": "A founder can have a polished product, but distribution matters more than taste when the market is crowded."
+    },
+    {
+      "id": "chunk_distribution_summary",
+      "sourceId": "yt_founder_distribution",
+      "chunkType": "metadata",
+      "text": "Startup advice about positioning and founder sales."
+    },
+    {
+      "id": "chunk_tokyo_transit_transcript",
+      "sourceId": "yt_japan_food_short",
+      "chunkType": "transcript",
+      "language": "en",
+      "startTimeMs": 42000,
+      "text": "For a first Japan vacation, stay near the Yamanote line, plan Tokyo food stops, and keep transit cards ready."
+    },
+    {
+      "id": "chunk_tokyo_transit_near_duplicate",
+      "sourceId": "yt_japan_food_short",
+      "chunkType": "transcript",
+      "language": "en",
+      "startTimeMs": 56000,
+      "text": "Japan transit planning stays easier when you keep a card ready near the Yamanote line."
+    },
+    {
+      "id": "chunk_kyoto_article",
+      "sourceId": "article_kyoto_hotels",
+      "chunkType": "article",
+      "text": "Kyoto hotels near Karasuma and Kyoto Station make day trips easy, especially if the itinerary includes Nara and Osaka."
+    },
+    {
+      "id": "chunk_japan_note",
+      "sourceId": "note_japan_itinerary",
+      "chunkType": "note",
+      "text": "Japan itinerary draft: Tokyo arrival, Kyoto temples, Osaka food night, reserve train seats, leave one open neighborhood day."
+    },
+    {
+      "id": "chunk_pdf_agents",
+      "sourceId": "pdf_ai_agents",
+      "chunkType": "document",
+      "language": "en",
+      "text": "AI agents need tool contracts, evaluation suites, action previews, and reversible operations for reliable automation."
+    },
+    {
+      "id": "chunk_instagram_auth",
+      "sourceId": "instagram_needs_auth",
+      "chunkType": "metadata",
+      "text": "needs_auth instagram reel metadata placeholder. Authentication is required before transcript or media extraction."
+    },
+    {
+      "id": "chunk_gameplay_visual",
+      "sourceId": "local_gameplay_visual",
+      "chunkType": "visual",
+      "startTimeMs": 1000,
+      "text": "Visual frame sample 1 for Imported Gameplay Clip at 0:01. A local thumbnail frame asset is available. This is a local visual observation placeholder from playable media without claiming detected events."
+    },
+    {
+      "id": "chunk_gameplay_transcript",
+      "sourceId": "local_gameplay_visual",
+      "chunkType": "transcript",
+      "language": "en",
+      "startTimeMs": 17000,
+      "text": "The commentator says the player misses the platform and everyone laughs during the match."
+    },
+    {
+      "id": "chunk_exact_phrase",
+      "sourceId": "article_ignored_exact",
+      "chunkType": "article",
+      "text": "This paragraph contains an exact phrase that should still match when a different ignored token is excluded."
+    }
+  ],
+  "captionTracks": [
+    {
+      "id": "caption_yt_founder_distribution_en",
+      "sourceId": "yt_founder_distribution",
+      "language": "en",
+      "source": "youtube_subtitle",
+      "format": "vtt",
+      "segmentCount": 18,
+      "chunkCount": 1
+    },
+    {
+      "id": "caption_yt_japan_food_short_en",
+      "sourceId": "yt_japan_food_short",
+      "language": "en",
+      "source": "youtube_subtitle",
+      "format": "vtt",
+      "segmentCount": 12,
+      "chunkCount": 1
+    }
+  ],
+  "visualObservations": [
+    {
+      "id": "visual_local_gameplay_sample_1",
+      "sourceId": "local_gameplay_visual",
+      "assetId": "asset_local_gameplay_playback",
+      "observationType": "frame_sample",
+      "provider": "local",
+      "model": "frame-sample-placeholders",
+      "startTimeMs": 1000,
+      "text": "Visual frame sample 1 for Imported Gameplay Clip at 0:01. Placeholder observation without detected-event claims."
+    }
+  ],
+  "embeddedChunkIds": [
+    "chunk_distribution_transcript",
+    "chunk_distribution_summary",
+    "chunk_tokyo_transit_transcript",
+    "chunk_kyoto_article",
+    "chunk_japan_note",
+    "chunk_pdf_agents",
+    "chunk_instagram_auth",
+    "chunk_gameplay_visual",
+    "chunk_gameplay_transcript",
+    "chunk_exact_phrase"
+  ],
+  "embeddingEnqueueLimit": 500,
+  "embeddingDrainLimit": 80,
+  "toolContracts": [
+    {
+      "name": "Transcript tool returns timestamped caption segments",
+      "tool": "get_transcript",
+      "sourceId": "yt_founder_distribution",
+      "requiresTranscript": true,
+      "minCounts": { "segments": 1, "captionTracks": 1 },
+      "requiredChunkType": "transcript",
+      "requiresTimestamp": true,
+      "requiresContentDepth": "transcript",
+      "requiresText": "distribution matters"
+    },
+    {
+      "name": "Visual tool returns cautious observation payload",
+      "tool": "get_visual_observations",
+      "sourceId": "local_gameplay_visual",
+      "requiresVisualObservations": true,
+      "minCounts": { "chunks": 1, "observations": 1 },
+      "requiredChunkType": "visual",
+      "requiresTimestamp": true,
+      "requiresContentDepth": "transcript_visual",
+      "requiresText": "without detected-event claims"
+    },
+    {
+      "name": "Explain result includes rank signals",
+      "tool": "explain_result",
+      "query": "type:video has:transcript distribution",
+      "sourceId": "yt_founder_distribution",
+      "requiresRankSignals": true,
+      "requiresContentDepth": "transcript",
+      "requiresText": "yt_founder_distribution"
+    },
+    {
+      "name": "Deterministic agent answer is cited and tool-backed",
+      "tool": "agent_answer",
+      "query": "help me build a Japan itinerary",
+      "requiresCitations": true,
+      "requiresUsedTools": true,
+      "requiresContentDepth": "transcript",
+      "requiresText": "grounded source"
+    },
+    {
+      "name": "Embedding maintenance detects missing vectors",
+      "tool": "embedding_maintenance",
+      "minValues": {
+        "missingEmbeddingCount": 1,
+        "enqueued": 1,
+        "processed": 1
+      }
+    }
+  ],
+  "queries": [
+    {
+      "name": "Transcript-only exact phrase",
+      "query": "\"distribution matters\"",
+      "expectedTopSourceId": "yt_founder_distribution",
+      "requiredChunkTypes": ["transcript"],
+      "requiresTimestamp": true,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Transcript filtered video search",
+      "query": "type:video has:transcript distribution",
+      "expectedAnySourceIds": ["yt_founder_distribution"],
+      "requiredChunkTypes": ["transcript"],
+      "requiresTimestamp": true,
+      "allResultsSourceType": "video",
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Semantic travel planning",
+      "query": "help me build a Japan itinerary",
+      "expectedAnySourceIds": ["yt_japan_food_short", "article_kyoto_hotels", "note_japan_itinerary"],
+      "minResults": 3,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Nearby timestamp dedupe",
+      "query": "type:video has:transcript japan transit yamanote",
+      "expectedAnySourceIds": ["yt_japan_food_short"],
+      "requiredChunkTypes": ["transcript"],
+      "requiresTimestamp": true,
+      "maxResultsPerSourceChunkType": 1,
+      "requiresNearbyDedupeSignal": true,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Newest deterministic sort",
+      "query": "japan sort:newest",
+      "expectedSort": "newest",
+      "minResults": 3,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Shortest deterministic sort",
+      "query": "type:video sort:shortest",
+      "expectedTopSourceId": "local_gameplay_visual",
+      "expectedSort": "shortest",
+      "allResultsSourceType": "video",
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Most complete deterministic sort",
+      "query": "type:video sort:complete",
+      "expectedTopSourceId": "local_gameplay_visual",
+      "expectedSort": "complete",
+      "allResultsSourceType": "video",
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Duration and saved range filter",
+      "query": "type:video duration:<5m saved:last30d",
+      "expectedAnySourceIds": ["yt_japan_food_short", "local_gameplay_visual"],
+      "allResultsSourceType": "video",
+      "allResultsMaxDurationSeconds": 300,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Date and timestamp filter",
+      "query": "date:2026-06 has:timestamp",
+      "expectedAnySourceIds": ["yt_founder_distribution", "yt_japan_food_short", "local_gameplay_visual"],
+      "allResultsTimestamped": true,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "PDF hard filter",
+      "query": "type:pdf ai agents",
+      "expectedTopSourceId": "pdf_ai_agents",
+      "allResultsSourceType": "pdf",
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Tag hard filter",
+      "query": "tag:travel japan",
+      "expectedAnySourceIds": ["yt_japan_food_short", "article_kyoto_hotels", "note_japan_itinerary"],
+      "minResults": 3,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Collection hard filter",
+      "query": "collection:japan trip planning",
+      "expectedAnySourceIds": ["yt_japan_food_short", "article_kyoto_hotels", "note_japan_itinerary"],
+      "minResults": 3,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Author hard filter",
+      "query": "author:travel japan transit",
+      "expectedTopSourceId": "yt_japan_food_short",
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Language hard filter",
+      "query": "language:en has:transcript",
+      "expectedAnySourceIds": ["yt_founder_distribution", "yt_japan_food_short", "local_gameplay_visual"],
+      "requiredChunkTypes": ["transcript"],
+      "requiresTimestamp": true,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Local video asset filter",
+      "query": "has:local_video",
+      "expectedTopSourceId": "local_gameplay_visual",
+      "allResultsSourceType": "video",
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Thumbnail asset filter",
+      "query": "has:thumbnail type:video",
+      "expectedAnySourceIds": ["yt_founder_distribution", "yt_japan_food_short", "local_gameplay_visual"],
+      "allResultsSourceType": "video",
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Instagram needs auth filter",
+      "query": "status:needs_auth site:instagram.com",
+      "expectedTopSourceId": "instagram_needs_auth",
+      "allResultsDomain": "instagram.com",
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Visual placeholder filter",
+      "query": "has:visual action:falling",
+      "expectedTopSourceId": "local_gameplay_visual",
+      "requiredChunkTypes": ["visual"],
+      "requiresTimestamp": true,
+      "forbidVisualClaims": true,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Quoted phrase with negative term",
+      "query": "\"exact phrase\" -ignored",
+      "minResults": 0
+    },
+    {
+      "name": "Agentic collection seed",
+      "query": "Japan trip planning",
+      "expectedAnySourceIds": ["yt_japan_food_short", "article_kyoto_hotels", "note_japan_itinerary"],
+      "minResults": 3,
+      "requiresRankSignals": true
+    }
+  ]
+}
