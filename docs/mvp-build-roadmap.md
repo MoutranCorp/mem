@@ -126,11 +126,9 @@ detail auth callout can also clear the saved domain auth session for retesting
 or account switching, and the always-reachable settings sheet can clear
 Instagram auth when the current session is already working. The Instagram login
 WebView now exposes loading/error diagnostics and reload/browser controls to
-separate WebView rendering failures from Instagram auth failures. It can also
-switch between mobile, home, desktop, and default WebView login modes while
-showing DOM/console diagnostics for blank-page cases. Desktop login is the
-default because it renders reliably in the current Android WebView test path,
-with compact diagnostics and session-cookie detection.
+separate WebView rendering failures from Instagram auth failures. Desktop login
+is now the direct path because it renders reliably in the current Android
+WebView test path, with compact diagnostics and session-cookie detection.
 
 Deliverables:
 

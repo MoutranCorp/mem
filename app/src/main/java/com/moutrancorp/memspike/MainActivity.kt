@@ -2303,24 +2303,10 @@ private fun SourceDetailSheet(
 @Composable
 private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
     val externalContext = LocalContext.current
-    data class LoginMode(val label: String, val url: String, val userAgent: String)
-
-    val defaultUserAgent = remember { WebSettings.getDefaultUserAgent(externalContext) }
-    val mobileChromeUserAgent = remember {
-        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
-    }
     val desktopChromeUserAgent = remember {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
     }
-    val loginModes = remember(defaultUserAgent, mobileChromeUserAgent, desktopChromeUserAgent) {
-        listOf(
-            LoginMode("Desktop", "https://www.instagram.com/accounts/login/?hl=en", desktopChromeUserAgent),
-            LoginMode("Mobile", "https://www.instagram.com/accounts/login/?hl=en", mobileChromeUserAgent),
-            LoginMode("Home", "https://www.instagram.com/?hl=en", mobileChromeUserAgent),
-            LoginMode("WebView", "https://www.instagram.com/accounts/login/?hl=en", defaultUserAgent),
-        )
-    }
-    var selectedMode by remember { mutableStateOf(loginModes.first()) }
+    val loginUrl = "https://www.instagram.com/accounts/login/?hl=en"
     var webView by remember { mutableStateOf<WebView?>(null) }
     var loadStatus by remember { mutableStateOf("Loading Instagram...") }
     var loadProgress by remember { mutableStateOf(0) }
@@ -2334,16 +2320,6 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
             CookieManager.getInstance().getCookie("https://instagram.com/"),
         ).joinToString("; ")
         hasInstagramSession = cookies.contains("sessionid=")
-    }
-
-    fun loadMode(mode: LoginMode) {
-        selectedMode = mode
-        loadError = null
-        loadProgress = 0
-        pageDiagnostics = "Waiting for page diagnostics..."
-        loadStatus = "Loading ${mode.label} login..."
-        webView?.settings?.userAgentString = mode.userAgent
-        webView?.loadUrl(mode.url)
     }
 
     Surface(
@@ -2389,19 +2365,12 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
                         )
                         MemIconButton(Icons.Rounded.Refresh, "Reload") {
                             loadError = null
-                            loadStatus = "Reloading ${selectedMode.label} login..."
-                            webView?.loadUrl(selectedMode.url)
+                            loadStatus = "Reloading Instagram login..."
+                            webView?.loadUrl(loginUrl)
                         }
                         MemIconButton(Icons.Rounded.OpenInBrowser, "Open in browser") {
                             runCatching {
-                                externalContext.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(selectedMode.url)))
-                            }
-                        }
-                    }
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
-                        items(loginModes) { mode ->
-                            SelectablePill(label = mode.label, selected = selectedMode == mode) {
-                                loadMode(mode)
+                                externalContext.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(loginUrl)))
                             }
                         }
                     }
@@ -2429,7 +2398,7 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
                         settings.useWideViewPort = true
                         settings.loadWithOverviewMode = true
                         settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                        settings.userAgentString = selectedMode.userAgent
+                        settings.userAgentString = desktopChromeUserAgent
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         webChromeClient = object : WebChromeClient() {
@@ -2449,13 +2418,13 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
                             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = false
                             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
                                 loadError = null
-                                loadStatus = "Loading ${selectedMode.label}..."
+                                loadStatus = "Loading Instagram login..."
                                 refreshSessionState()
                             }
 
                             override fun onPageFinished(view: WebView, url: String?) {
                                 if (loadError == null) {
-                                    loadStatus = "Loaded ${selectedMode.label}."
+                                    loadStatus = "Loaded Instagram login."
                                 }
                                 refreshSessionState()
                                 view.evaluateJavascript(
@@ -2486,7 +2455,7 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
                                 }
                             }
                         }
-                        loadUrl(selectedMode.url)
+                        loadUrl(loginUrl)
                     }
                 },
                 modifier = Modifier
