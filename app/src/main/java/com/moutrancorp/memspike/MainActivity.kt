@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -94,7 +93,6 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -111,9 +109,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -124,8 +119,18 @@ import androidx.compose.ui.unit.sp
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import com.moutrancorp.memspike.data.ExtractedSourceData
+import com.moutrancorp.memspike.data.IngestionJobEntity
+import com.moutrancorp.memspike.data.MemDatabase
+import com.moutrancorp.memspike.data.MemoryRepository
+import com.moutrancorp.memspike.data.MemoryState
+import com.moutrancorp.memspike.data.SourceEntity
+import com.moutrancorp.memspike.data.canonicalize
+import com.moutrancorp.memspike.data.originDomain
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -141,6 +146,7 @@ class MainActivity : ComponentActivity() {
             context = this,
             appearanceStore = AppearanceStore(this),
             extractor = YtDlpExtractor(this),
+            repository = MemoryRepository(MemDatabase.get(this)),
         )
         setContent {
             MemApp(appState)
@@ -160,6 +166,11 @@ class MainActivity : ComponentActivity() {
         if (shared.isNotEmpty()) {
             appState.openCapture(shared, autoExtract = true)
         }
+    }
+
+    override fun onDestroy() {
+        appState.close()
+        super.onDestroy()
     }
 }
 
@@ -256,7 +267,10 @@ private class MemAppState(
     private val context: Context,
     private val appearanceStore: AppearanceStore,
     private val extractor: YtDlpExtractor,
+    private val repository: MemoryRepository,
 ) {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
     var selectedTab by mutableStateOf(MainTab.Mem)
     var showCapture by mutableStateOf(false)
     var showAppearance by mutableStateOf(false)
@@ -270,8 +284,15 @@ private class MemAppState(
     val memories = mutableStateListOf<MemoryUi>()
 
     init {
-        jobs.addAll(sampleJobs())
-        memories.addAll(sampleMemories())
+        scope.launch {
+            repository.observeMemoryState().collect { state ->
+                applyMemoryState(state)
+            }
+        }
+    }
+
+    fun close() {
+        scope.cancel()
     }
 
     fun updateAppearance(settings: AppearanceSettings) {
@@ -302,38 +323,36 @@ private class MemAppState(
             return
         }
 
-        val jobId = UUID.randomUUID().toString()
-        jobs.add(
-            0,
-            IngestionJobUi(
-                id = jobId,
-                title = trimmed,
-                source = "Shared link",
-                state = "Extracting",
-                progress = 0.35f,
-                icon = Icons.Rounded.Link,
-                isError = false,
-            ),
-        )
-
         isExtracting = true
         logOutput = "Running packaged yt-dlp on-device...\n\n$trimmed"
-        CoroutineScope(Dispatchers.Main).launch {
+        scope.launch {
+            val queued = repository.createQueuedSource(trimmed)
+            repository.markExtracting(queued.sourceId, queued.jobId)
             val result = extractor.extract(trimmed)
+            repository.completeExtraction(
+                sourceId = queued.sourceId,
+                jobId = queued.jobId,
+                result = result.toExtractedSourceData(trimmed),
+            )
             isExtracting = false
             logOutput = result.prettyText
-            val index = jobs.indexOfFirst { it.id == jobId }
-            if (index >= 0) {
-                jobs[index] = jobs[index].copy(
-                    state = if (result.ok) "Indexed" else if (result.authRequired) "Needs auth" else "Failed",
-                    progress = 1f,
-                    isError = !result.ok,
-                )
-            }
-            if (result.ok) {
-                memories.add(0, result.toMemory(trimmed))
-            }
         }
+    }
+
+    private fun applyMemoryState(state: MemoryState) {
+        val sourceById = state.sources.associateBy { it.id }
+        memories.clear()
+        memories.addAll(
+            if (state.sources.isEmpty()) sampleMemories() else state.sources.map { it.toMemoryUi() },
+        )
+        jobs.clear()
+        jobs.addAll(
+            if (state.jobs.isEmpty() && state.sources.isEmpty()) {
+                sampleJobs()
+            } else {
+                state.jobs.map { it.toJobUi(sourceById[it.sourceId]) }
+            },
+        )
     }
 
     fun copyLog() {
@@ -373,7 +392,13 @@ private class YtDlpExtractor(private val activity: Activity) {
                 title = null,
                 source = null,
                 extractor = null,
+                sourceType = "link",
+                author = null,
+                summary = null,
+                thumbnailUrl = null,
+                durationSeconds = null,
                 authRequired = false,
+                error = "${t::class.java.simpleName}: ${t.message}",
                 prettyText = "Extraction failed:\n${t::class.java.simpleName}: ${t.message}",
             )
         }
@@ -391,18 +416,31 @@ private data class ExtractionResult(
     val title: String?,
     val source: String?,
     val extractor: String?,
+    val sourceType: String?,
+    val author: String?,
+    val summary: String?,
+    val thumbnailUrl: String?,
+    val durationSeconds: Long?,
     val authRequired: Boolean,
+    val error: String?,
     val prettyText: String,
 ) {
-    fun toMemory(url: String): MemoryUi {
-        return MemoryUi(
-            title = title ?: url,
-            source = extractor ?: source ?: "Extracted link",
-            type = "Video",
-            summary = "Metadata extracted on-device and ready for the memory index.",
-            time = "Just now",
-            icon = Icons.Rounded.SmartDisplay,
-            tags = listOf("extracted", "rag candidate"),
+    fun toExtractedSourceData(input: String): ExtractedSourceData {
+        val resolvedUrl = source ?: input
+        return ExtractedSourceData(
+            ok = ok,
+            canonicalUrl = canonicalize(resolvedUrl),
+            originalUrl = input,
+            sourceType = sourceType ?: "link",
+            originDomain = originDomain(resolvedUrl),
+            title = title ?: input.take(90),
+            author = author,
+            summary = summary,
+            thumbnailUrl = thumbnailUrl,
+            durationSeconds = durationSeconds,
+            authRequired = authRequired,
+            error = error,
+            rawMetadataJson = prettyText,
         )
     }
 
@@ -420,7 +458,15 @@ private data class ExtractionResult(
                 title = candidate?.optString("title")?.takeIf { it.isNotBlank() },
                 source = candidate?.optString("webpageUrl")?.takeIf { it.isNotBlank() },
                 extractor = candidate?.optString("extractor")?.takeIf { it.isNotBlank() },
+                sourceType = candidate?.optString("type")?.takeIf { it.isNotBlank() },
+                author = candidate?.optString("uploader")?.takeIf { it.isNotBlank() }
+                    ?: candidate?.optString("channel")?.takeIf { it.isNotBlank() },
+                summary = candidate?.optString("descriptionPreview")?.takeIf { it.isNotBlank() }
+                    ?: candidate?.optString("ragText")?.takeIf { it.isNotBlank() },
+                thumbnailUrl = candidate?.optString("thumbnail")?.takeIf { it.isNotBlank() },
+                durationSeconds = candidate?.optLong("durationSeconds")?.takeIf { it > 0 },
                 authRequired = root.optBoolean("authRequired", false),
+                error = root.optString("error").takeIf { it.isNotBlank() },
                 prettyText = pretty,
             )
         }
@@ -446,6 +492,82 @@ private data class MemoryUi(
     val icon: ImageVector,
     val tags: List<String>,
 )
+
+private fun SourceEntity.toMemoryUi(): MemoryUi {
+    val typeLabel = sourceType.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+    return MemoryUi(
+        title = title,
+        source = originDomain ?: author ?: "Saved source",
+        type = typeLabel,
+        summary = summary?.takeIf { it.isNotBlank() }
+            ?: when (processingState) {
+                "needs_auth" -> "This source needs explicit auth before Mem can extract full context."
+                "failed" -> "Extraction failed. Open Inbox to inspect and share the log."
+                "extracting" -> "Mem is extracting metadata on-device."
+                else -> "Metadata is saved and ready for indexing."
+            },
+        time = savedAt.relativeTime(),
+        icon = sourceIcon(sourceType, processingState),
+        tags = buildList {
+            add(processingState)
+            if (authState == "needs_auth") add("needs auth")
+            originDomain?.let { add(it) }
+        }.take(3),
+    )
+}
+
+private fun IngestionJobEntity.toJobUi(source: SourceEntity?): IngestionJobUi {
+    return IngestionJobUi(
+        id = id,
+        title = source?.title ?: sourceId,
+        source = source?.originDomain ?: jobType,
+        state = state.displayState(),
+        progress = progress,
+        icon = sourceIcon(source?.sourceType ?: "link", state),
+        isError = state == "failed" || state == "needs_auth",
+    )
+}
+
+private fun sourceIcon(type: String, state: String): ImageVector {
+    if (state == "needs_auth" || state == "failed") return Icons.Rounded.ErrorOutline
+    return when (type.lowercase()) {
+        "video" -> Icons.Rounded.SmartDisplay
+        "article" -> Icons.AutoMirrored.Rounded.MenuBook
+        "note" -> Icons.AutoMirrored.Rounded.Article
+        "audio" -> Icons.Rounded.Waves
+        "document", "pdf" -> Icons.AutoMirrored.Rounded.Article
+        else -> Icons.Rounded.Link
+    }
+}
+
+private fun String.displayState(): String {
+    return when (this) {
+        "queued" -> "Queued"
+        "extracting" -> "Extracting"
+        "enriching" -> "Enriching"
+        "indexing" -> "Indexing"
+        "done" -> "Indexed"
+        "needs_auth" -> "Needs auth"
+        "metadata_only" -> "Metadata only"
+        "failed" -> "Failed"
+        "canceled" -> "Canceled"
+        else -> replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+    }
+}
+
+private fun Long.relativeTime(): String {
+    val delta = (System.currentTimeMillis() - this).coerceAtLeast(0L)
+    val minute = 60_000L
+    val hour = 60 * minute
+    val day = 24 * hour
+    return when {
+        delta < minute -> "Just now"
+        delta < hour -> "${delta / minute}m ago"
+        delta < day -> "${delta / hour}h ago"
+        delta < 7 * day -> "${delta / day}d ago"
+        else -> "${delta / day}d ago"
+    }
+}
 
 @Stable
 private data class MemColors(

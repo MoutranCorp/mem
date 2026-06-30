@@ -19,6 +19,9 @@ model used by `mobile-agent`.
 - Mem home, floating dock, capture sheet, inbox/logs, and library feed/grid/
   timeline shell.
 - Library mode is persisted and restored.
+- Room-backed `sources`, `ingestion_jobs`, and `document_chunks` tables.
+- Captured links and extraction outcomes persist across app restarts.
+- Auth-required and failed extractions stay visible in Inbox with logs.
 
 The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and
@@ -61,14 +64,14 @@ The production direction is documented in:
 
 Immediate next steps:
 
-1. Add Room and convert the in-memory Capture/Inbox state into durable source
-   and ingestion-job records.
-2. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
+1. Add retry/cancel controls for durable ingestion jobs.
+2. Add SQLite FTS5 indexing over source titles, summaries, and metadata chunks.
+3. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
    libs and pass their paths to `yt-dlp` through `ffmpeg_location`.
-3. Move long downloads to user-initiated data transfer jobs and media processing
+4. Move long downloads to user-initiated data transfer jobs and media processing
    work to a foreground service with the `mediaProcessing` type.
-4. Add transcript/caption fetching behind an explicit rights confirmation.
-5. Add an embedding/index interface so every extracted record becomes a RAG
+5. Add transcript/caption fetching behind an explicit rights confirmation.
+6. Add an embedding/index interface so every extracted record becomes a RAG
    document with stable IDs, source URL, timestamp, title, tags, and transcript
    segments.
 

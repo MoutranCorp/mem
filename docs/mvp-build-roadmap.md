@@ -53,15 +53,21 @@ Exit criteria:
 
 Goal: replace one-shot extraction output with real data.
 
+Status: started. The app now has Room-backed `sources`, `ingestion_jobs`, and
+`document_chunks` tables. Captured links create durable jobs, extraction results
+persist as sources, and Inbox/Library/Home observe database state.
+
 Deliverables:
 
-- Add Room.
+- Add Room. Done.
 - Add Source, IngestionJob, DocumentChunk, Asset, Tag, Collection tables.
+  Source, IngestionJob, and DocumentChunk are done; Asset, Tag, and Collection
+  remain.
 - Add migrations from version 1 onward.
 - Add repository layer.
-- Add Inbox screen backed by DB state.
-- Store raw metadata JSON.
-- Store normalized extracted fields.
+- Add Inbox screen backed by DB state. Done.
+- Store raw metadata JSON. Done.
+- Store normalized extracted fields. Started.
 
 Exit criteria:
 
