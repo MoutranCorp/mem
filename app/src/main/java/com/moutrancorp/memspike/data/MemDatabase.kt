@@ -267,6 +267,9 @@ interface SourceDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(source: SourceEntity)
+
+    @Query("DELETE FROM sources WHERE id = :sourceId")
+    suspend fun deleteById(sourceId: String)
 }
 
 @Dao
@@ -297,6 +300,9 @@ interface AssetDao {
 
     @Query("SELECT * FROM assets WHERE sourceId = :sourceId AND role = :role LIMIT 1")
     suspend fun findBySourceAndRole(sourceId: String, role: String): AssetEntity?
+
+    @Query("SELECT * FROM assets WHERE sourceId = :sourceId")
+    suspend fun findBySource(sourceId: String): List<AssetEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(asset: AssetEntity)

@@ -68,7 +68,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Article
 import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Archive
 import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Bookmarks
 import androidx.compose.material.icons.rounded.CheckCircle
@@ -78,6 +77,7 @@ import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Folder
+import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material.icons.rounded.GridView
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.Inbox
@@ -566,6 +566,20 @@ private class MemAppState(
         scope.launch {
             repository.tagSource(memory.id)
             logOutput = "Tagged ${memory.title} for review."
+        }
+    }
+
+    fun deleteMemory(memory: MemoryUi) {
+        scope.launch {
+            val deleted = withContext(Dispatchers.IO) { repository.deleteSource(memory.id) }
+            if (deleted) {
+                if (selectedMemory?.id == memory.id) selectedMemory = null
+                if (playingMemory?.id == memory.id) playingMemory = null
+                logOutput = "Deleted ${memory.title}."
+                Toast.makeText(context, "Deleted memory", Toast.LENGTH_SHORT).show()
+            } else {
+                logOutput = "Could not delete ${memory.title}."
+            }
         }
     }
 
@@ -1765,6 +1779,7 @@ private fun MemScaffold(state: MemAppState) {
                 onClearAuth = state::clearAuthForMemory,
                 onAddToPlaylist = state::addToPlaylist,
                 onTagForReview = state::tagForReview,
+                onDeleteMemory = state::deleteMemory,
             )
         }
     }
@@ -1936,11 +1951,13 @@ private fun LibraryScreen(state: MemAppState) {
                 onTagForReview = state::tagForReview,
                 onOpenMemory = state::openMemory,
                 onOpenDetail = state::openSourceDetail,
+                onDeleteMemory = state::deleteMemory,
             )
             LibraryMode.Grid -> LibraryGrid(
                 memories = state.memories,
                 onOpenMemory = state::openMemory,
                 onOpenDetail = state::openSourceDetail,
+                onDeleteMemory = state::deleteMemory,
             )
             LibraryMode.Timeline -> LibraryTimeline(
                 memories = state.memories,
@@ -2352,6 +2369,7 @@ private fun SourceDetailSheet(
     onClearAuth: (MemoryUi) -> Unit,
     onAddToPlaylist: (MemoryUi) -> Unit,
     onTagForReview: (MemoryUi) -> Unit,
+    onDeleteMemory: (MemoryUi) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -2381,6 +2399,7 @@ private fun SourceDetailSheet(
                 seekBackSeconds = seekBackSeconds,
                 seekForwardSeconds = seekForwardSeconds,
                 controlsInitiallyVisible = true,
+                onExpand = { onOpenMemory(memory) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(214.dp)
@@ -2511,6 +2530,15 @@ private fun SourceDetailSheet(
             Icon(Icons.Rounded.Tag, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
             Text("Tag for review")
+        }
+        OutlinedButton(
+            onClick = { onDeleteMemory(memory) },
+            modifier = Modifier.fillMaxWidth(),
+            shape = MemTokens.shapes.pill,
+        ) {
+            Icon(Icons.Rounded.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
+            Text("Delete memory")
         }
     }
 }
@@ -2751,6 +2779,7 @@ private fun LocalVideoPlayer(
     seekBackSeconds: Int = 10,
     seekForwardSeconds: Int = 30,
     controlsInitiallyVisible: Boolean = false,
+    onExpand: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val mediaItem = remember(path) { MediaItem.fromUri(Uri.fromFile(File(path))) }
@@ -2790,6 +2819,18 @@ private fun LocalVideoPlayer(
             },
             modifier = Modifier.fillMaxSize(),
         )
+        if (onExpand != null) {
+            IconButton(
+                onClick = onExpand,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(MemTokens.spacing.xs)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.54f)),
+            ) {
+                Icon(Icons.Rounded.Fullscreen, contentDescription = "Expand", tint = Color.White)
+            }
+        }
     }
 }
 
@@ -3081,6 +3122,7 @@ private fun LibraryFeed(
     onTagForReview: (MemoryUi) -> Unit,
     onOpenMemory: (MemoryUi) -> Unit,
     onOpenDetail: (MemoryUi) -> Unit,
+    onDeleteMemory: (MemoryUi) -> Unit,
 ) {
     val listState = rememberLazyListState()
     val autoPlayMemoryId by remember(memories, listState) {
@@ -3103,6 +3145,7 @@ private fun LibraryFeed(
                 onTagForReview = onTagForReview,
                 onOpenMemory = onOpenMemory,
                 onOpenDetail = onOpenDetail,
+                onDeleteMemory = onDeleteMemory,
                 autoPlayInline = memory.id == autoPlayMemoryId,
                 seekBackSeconds = seekBackSeconds,
                 seekForwardSeconds = seekForwardSeconds,
@@ -3116,6 +3159,7 @@ private fun LibraryGrid(
     memories: List<MemoryUi>,
     onOpenMemory: (MemoryUi) -> Unit,
     onOpenDetail: (MemoryUi) -> Unit,
+    onDeleteMemory: (MemoryUi) -> Unit,
 ) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
@@ -3124,7 +3168,7 @@ private fun LibraryGrid(
         verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
     ) {
         items(memories) { memory ->
-            MemoryGridCard(memory, onOpenMemory, onOpenDetail)
+            MemoryGridCard(memory, onOpenMemory, onOpenDetail, onDeleteMemory)
         }
     }
 }
@@ -3152,6 +3196,7 @@ private fun FeedItem(
     onTagForReview: (MemoryUi) -> Unit,
     onOpenMemory: (MemoryUi) -> Unit,
     onOpenDetail: (MemoryUi) -> Unit,
+    onDeleteMemory: (MemoryUi) -> Unit,
     autoPlayInline: Boolean,
     seekBackSeconds: Int,
     seekForwardSeconds: Int,
@@ -3192,6 +3237,7 @@ private fun FeedItem(
                     seekBackSeconds = seekBackSeconds,
                     seekForwardSeconds = seekForwardSeconds,
                     controlsInitiallyVisible = false,
+                    onExpand = { onOpenMemory(memory) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(16f / 9f)
@@ -3204,7 +3250,7 @@ private fun FeedItem(
                 InlineAction("Details", Icons.AutoMirrored.Rounded.Article) { onOpenDetail(memory) }
                 InlineAction("Playlist", Icons.Rounded.Bookmarks) { onAddToPlaylist(memory) }
                 InlineAction("Tag", Icons.Rounded.Tag) { onTagForReview(memory) }
-                InlineAction("Archive", Icons.Rounded.Archive)
+                InlineAction("Delete", Icons.Rounded.DeleteOutline) { onDeleteMemory(memory) }
             }
         }
     }
@@ -3215,6 +3261,7 @@ private fun MemoryGridCard(
     memory: MemoryUi,
     onOpenMemory: (MemoryUi) -> Unit,
     onOpenDetail: (MemoryUi) -> Unit,
+    onDeleteMemory: (MemoryUi) -> Unit,
 ) {
     SurfaceCard {
         Column(modifier = Modifier.padding(MemTokens.spacing.md), verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
@@ -3227,6 +3274,18 @@ private fun MemoryGridCard(
                 contentAlignment = Alignment.Center,
             ) {
                 SourceVisual(memory, modifier = Modifier.fillMaxSize(), onClick = { onOpenMemory(memory) })
+                if (memory.localPlaybackPath != null) {
+                    IconButton(
+                        onClick = { onOpenMemory(memory) },
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(MemTokens.spacing.xs)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.54f)),
+                    ) {
+                        Icon(Icons.Rounded.Fullscreen, contentDescription = "Expand", tint = Color.White)
+                    }
+                }
             }
             Column(modifier = Modifier.clickable { onOpenDetail(memory) }) {
                 Text(memory.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -3234,6 +3293,10 @@ private fun MemoryGridCard(
                 memory.durationLabel?.let {
                     Text(it, color = MemTokens.colors.textTertiary, fontSize = 12.sp, maxLines = 1)
                 }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
+                SmallActionButton("Details", Icons.AutoMirrored.Rounded.Article) { onOpenDetail(memory) }
+                SmallActionButton("Delete", Icons.Rounded.DeleteOutline) { onDeleteMemory(memory) }
             }
         }
     }

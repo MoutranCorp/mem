@@ -241,6 +241,18 @@ class MemoryRepository(private val database: MemDatabase) {
         indexSource(source, null)
     }
 
+    suspend fun deleteSource(sourceId: String): Boolean {
+        val source = database.sourceDao().findById(sourceId) ?: return false
+        val localFiles = database.assetDao().findBySource(sourceId)
+            .mapNotNull { it.localPath }
+            .filter { it.isNotBlank() }
+            .map(::File)
+        database.sourceDao().deleteById(source.id)
+        database.sourceSearchDao().deleteForSource(source.id)
+        localFiles.forEach { file -> runCatching { file.delete() } }
+        return true
+    }
+
     suspend fun authSessionForInput(input: String): AuthSessionEntity? {
         val domain = authDomain(input) ?: return null
         return database.authSessionDao().findByDomain(domain)?.takeIf { it.status == "connected" }

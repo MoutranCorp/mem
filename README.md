@@ -56,6 +56,8 @@ model used by `mobile-agent`.
 - Video imports generate a local thumbnail, feed autoplay is limited to one
   visible video at a time, controls stay hidden until the video is tapped, and
   playback seek-back/seek-forward seconds are configurable in settings.
+- Saved memories can be deleted from feed, grid, or source detail, and playable
+  video thumbnails/players expose an expand button for fullscreen playback.
 - Auth-gated links are saved as first-class `needs_auth` sources with a clear
   detail callout and retry-public-extraction action.
 - `needs_auth` source detail can import a domain-scoped `cookies.txt` file,
