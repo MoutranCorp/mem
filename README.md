@@ -122,14 +122,22 @@ The production direction is documented in:
 Immediate next steps:
 
 1. Add transcript/caption extraction through yt-dlp without downloading media.
+   Started with subtitle URL selection, WebVTT/SRT/JSON3 parsing, and
+   transcript chunks returned by the packaged extractor.
 2. Parse subtitles into timestamped transcript segments and durable chunks.
+   Started with Room version 6 caption track and chunk search tables.
 3. Expand source/detail search to query transcript/article chunks, not just
    source summaries.
+   Started with chunk-level FTS and cited search result cards in Library.
 4. Add deterministic search filters and match explanations from the command
    field.
+   Started with simple `type:`, `site:`, `domain:`, `status:`, and `has:`
+   filter tokens routed into FTS tags.
 5. Add an embedding/index interface so every extracted record can become a RAG
    document with stable IDs, source URL, timestamp, title, tags, and transcript
    segments.
+   Started with provider interfaces for embeddings, vector search, and agent
+   tool execution.
 6. Add the first agent search tool with cited results and action previews.
 7. Build visual indexing for local/authorized videos so Mem can answer queries
    about what happens visually, not only what is spoken.

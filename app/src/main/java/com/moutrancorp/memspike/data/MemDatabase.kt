@@ -45,6 +45,33 @@ data class SourceEntity(
 )
 
 @Entity(
+    tableName = "caption_tracks",
+    foreignKeys = [
+        ForeignKey(
+            entity = SourceEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sourceId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [
+        Index(value = ["sourceId"]),
+        Index(value = ["language"]),
+        Index(value = ["source"]),
+    ],
+)
+data class CaptionTrackEntity(
+    @PrimaryKey val id: String,
+    val sourceId: String,
+    val language: String?,
+    val source: String,
+    val format: String?,
+    val segmentCount: Int,
+    val chunkCount: Int,
+    val createdAt: Long,
+)
+
+@Entity(
     tableName = "ingestion_jobs",
     foreignKeys = [
         ForeignKey(
@@ -92,10 +119,15 @@ data class DocumentChunkEntity(
     val sourceId: String,
     val text: String,
     val chunkType: String,
+    val language: String?,
     val startOffset: Int?,
     val endOffset: Int?,
     val startTimeMs: Long?,
     val endTimeMs: Long?,
+    val page: Int?,
+    val sectionTitle: String?,
+    val provider: String?,
+    val contentHash: String?,
     val createdAt: Long,
 )
 
@@ -136,6 +168,74 @@ data class SourceSearchEntity(
     val title: String,
     val body: String,
     val tags: String,
+)
+
+@Fts4
+@Entity(tableName = "chunk_search")
+data class ChunkSearchEntity(
+    val chunkId: String,
+    val sourceId: String,
+    val title: String,
+    val body: String,
+    val tags: String,
+)
+
+@Entity(
+    tableName = "embedding_models",
+    indices = [Index(value = ["provider", "model", "embeddingType"], unique = true)],
+)
+data class EmbeddingModelEntity(
+    @PrimaryKey val id: String,
+    val provider: String,
+    val model: String,
+    val embeddingType: String,
+    val dimensions: Int?,
+    val quantization: String?,
+    val status: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
+@Entity(
+    tableName = "visual_observations",
+    foreignKeys = [
+        ForeignKey(
+            entity = SourceEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sourceId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [
+        Index(value = ["sourceId"]),
+        Index(value = ["observationType"]),
+        Index(value = ["provider"]),
+    ],
+)
+data class VisualObservationEntity(
+    @PrimaryKey val id: String,
+    val sourceId: String,
+    val assetId: String?,
+    val observationType: String,
+    val text: String,
+    val confidence: Float?,
+    val provider: String,
+    val model: String?,
+    val startTimeMs: Long?,
+    val endTimeMs: Long?,
+    val createdAt: Long,
+)
+
+@Entity(
+    tableName = "search_queries",
+    indices = [Index(value = ["createdAt"])],
+)
+data class SearchQueryEntity(
+    @PrimaryKey val id: String,
+    val query: String,
+    val parsedFiltersJson: String,
+    val resultCount: Int,
+    val createdAt: Long,
 )
 
 @Entity(
@@ -241,6 +341,20 @@ data class CollectionSummary(
     val updatedAt: Long,
 )
 
+data class ChunkSearchResult(
+    val sourceId: String,
+    val chunkId: String,
+    val title: String,
+    val sourceType: String,
+    val originDomain: String?,
+    val author: String?,
+    val body: String,
+    val chunkType: String,
+    val startTimeMs: Long?,
+    val endTimeMs: Long?,
+    val savedAt: Long,
+)
+
 @Dao
 interface SourceDao {
     @Query("SELECT * FROM sources ORDER BY savedAt DESC")
@@ -291,6 +405,12 @@ interface IngestionJobDao {
 interface DocumentChunkDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(chunk: DocumentChunkEntity)
+
+    @Query("DELETE FROM document_chunks WHERE sourceId = :sourceId AND chunkType IN (:chunkTypes)")
+    suspend fun deleteForSourceAndTypes(sourceId: String, chunkTypes: List<String>)
+
+    @Query("SELECT * FROM document_chunks WHERE sourceId = :sourceId ORDER BY COALESCE(startTimeMs, startOffset, 0) LIMIT :limit")
+    suspend fun findBySource(sourceId: String, limit: Int = 200): List<DocumentChunkEntity>
 }
 
 @Dao
@@ -315,6 +435,65 @@ interface SourceSearchDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entity: SourceSearchEntity)
+}
+
+@Dao
+interface ChunkSearchDao {
+    @Query("DELETE FROM chunk_search WHERE sourceId = :sourceId")
+    suspend fun deleteForSource(sourceId: String)
+
+    @Query("DELETE FROM chunk_search WHERE chunkId = :chunkId")
+    suspend fun deleteForChunk(chunkId: String)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(entity: ChunkSearchEntity)
+
+    @Query(
+        """
+        SELECT sources.id AS sourceId, chunk_search.chunkId AS chunkId, sources.title AS title,
+               sources.sourceType AS sourceType, sources.originDomain AS originDomain,
+               sources.author AS author, chunk_search.body AS body,
+               document_chunks.chunkType AS chunkType, document_chunks.startTimeMs AS startTimeMs,
+               document_chunks.endTimeMs AS endTimeMs, sources.savedAt AS savedAt
+        FROM chunk_search
+        INNER JOIN sources ON sources.id = chunk_search.sourceId
+        LEFT JOIN document_chunks ON document_chunks.id = chunk_search.chunkId
+        WHERE chunk_search MATCH :query
+        ORDER BY sources.savedAt DESC
+        LIMIT :limit
+        """,
+    )
+    fun observeSearchResults(query: String, limit: Int): Flow<List<ChunkSearchResult>>
+}
+
+@Dao
+interface CaptionTrackDao {
+    @Query("DELETE FROM caption_tracks WHERE sourceId = :sourceId")
+    suspend fun deleteForSource(sourceId: String)
+
+    @Query("SELECT * FROM caption_tracks WHERE sourceId = :sourceId ORDER BY createdAt DESC")
+    suspend fun findBySource(sourceId: String): List<CaptionTrackEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(track: CaptionTrackEntity)
+}
+
+@Dao
+interface EmbeddingModelDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(model: EmbeddingModelEntity)
+}
+
+@Dao
+interface VisualObservationDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(observation: VisualObservationEntity)
+}
+
+@Dao
+interface SearchQueryDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(query: SearchQueryEntity)
 }
 
 @Dao
@@ -370,25 +549,35 @@ interface AuthSessionDao {
 @Database(
     entities = [
         SourceEntity::class,
+        CaptionTrackEntity::class,
         IngestionJobEntity::class,
         DocumentChunkEntity::class,
         AssetEntity::class,
         SourceSearchEntity::class,
+        ChunkSearchEntity::class,
+        EmbeddingModelEntity::class,
+        VisualObservationEntity::class,
+        SearchQueryEntity::class,
         TagEntity::class,
         SourceTagEntity::class,
         CollectionEntity::class,
         CollectionSourceEntity::class,
         AuthSessionEntity::class,
     ],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 abstract class MemDatabase : RoomDatabase() {
     abstract fun sourceDao(): SourceDao
+    abstract fun captionTrackDao(): CaptionTrackDao
     abstract fun ingestionJobDao(): IngestionJobDao
     abstract fun documentChunkDao(): DocumentChunkDao
     abstract fun assetDao(): AssetDao
     abstract fun sourceSearchDao(): SourceSearchDao
+    abstract fun chunkSearchDao(): ChunkSearchDao
+    abstract fun embeddingModelDao(): EmbeddingModelDao
+    abstract fun visualObservationDao(): VisualObservationDao
+    abstract fun searchQueryDao(): SearchQueryDao
     abstract fun tagDao(): TagDao
     abstract fun collectionDao(): CollectionDao
     abstract fun authSessionDao(): AuthSessionDao
@@ -435,6 +624,112 @@ abstract class MemDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 createAuthSessionTables(db)
             }
+        }
+
+        private val migration5To6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                createSearchAndRagTables(db)
+            }
+        }
+
+        private fun createSearchAndRagTables(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `document_chunks` ADD COLUMN `language` TEXT")
+            db.execSQL("ALTER TABLE `document_chunks` ADD COLUMN `page` INTEGER")
+            db.execSQL("ALTER TABLE `document_chunks` ADD COLUMN `sectionTitle` TEXT")
+            db.execSQL("ALTER TABLE `document_chunks` ADD COLUMN `provider` TEXT")
+            db.execSQL("ALTER TABLE `document_chunks` ADD COLUMN `contentHash` TEXT")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `caption_tracks` (
+                    `id` TEXT NOT NULL,
+                    `sourceId` TEXT NOT NULL,
+                    `language` TEXT,
+                    `source` TEXT NOT NULL,
+                    `format` TEXT,
+                    `segmentCount` INTEGER NOT NULL,
+                    `chunkCount` INTEGER NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`),
+                    FOREIGN KEY(`sourceId`) REFERENCES `sources`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_caption_tracks_sourceId` ON `caption_tracks` (`sourceId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_caption_tracks_language` ON `caption_tracks` (`language`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_caption_tracks_source` ON `caption_tracks` (`source`)")
+            db.execSQL(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS `chunk_search`
+                USING FTS4(
+                    `chunkId` TEXT NOT NULL,
+                    `sourceId` TEXT NOT NULL,
+                    `title` TEXT NOT NULL,
+                    `body` TEXT NOT NULL,
+                    `tags` TEXT NOT NULL
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                INSERT INTO chunk_search(chunkId, sourceId, title, body, tags)
+                SELECT document_chunks.id, document_chunks.sourceId, sources.title, document_chunks.text,
+                       document_chunks.chunkType || ' ' || sources.sourceType || ' ' || sources.processingState
+                FROM document_chunks
+                INNER JOIN sources ON sources.id = document_chunks.sourceId
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `embedding_models` (
+                    `id` TEXT NOT NULL,
+                    `provider` TEXT NOT NULL,
+                    `model` TEXT NOT NULL,
+                    `embeddingType` TEXT NOT NULL,
+                    `dimensions` INTEGER,
+                    `quantization` TEXT,
+                    `status` TEXT NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    `updatedAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_embedding_models_provider_model_embeddingType` ON `embedding_models` (`provider`, `model`, `embeddingType`)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `visual_observations` (
+                    `id` TEXT NOT NULL,
+                    `sourceId` TEXT NOT NULL,
+                    `assetId` TEXT,
+                    `observationType` TEXT NOT NULL,
+                    `text` TEXT NOT NULL,
+                    `confidence` REAL,
+                    `provider` TEXT NOT NULL,
+                    `model` TEXT,
+                    `startTimeMs` INTEGER,
+                    `endTimeMs` INTEGER,
+                    `createdAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`),
+                    FOREIGN KEY(`sourceId`) REFERENCES `sources`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_visual_observations_sourceId` ON `visual_observations` (`sourceId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_visual_observations_observationType` ON `visual_observations` (`observationType`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_visual_observations_provider` ON `visual_observations` (`provider`)")
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `search_queries` (
+                    `id` TEXT NOT NULL,
+                    `query` TEXT NOT NULL,
+                    `parsedFiltersJson` TEXT NOT NULL,
+                    `resultCount` INTEGER NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_search_queries_createdAt` ON `search_queries` (`createdAt`)")
         }
 
         private fun createAuthSessionTables(db: SupportSQLiteDatabase) {
@@ -557,7 +852,7 @@ abstract class MemDatabase : RoomDatabase() {
                     MemDatabase::class.java,
                     "mem.db",
                 )
-                    .addMigrations(migration1To2, migration2To3, migration3To4, migration4To5)
+                    .addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6)
                     .build()
                     .also { instance = it }
             }

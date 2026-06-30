@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 import traceback
 from html.parser import HTMLParser
@@ -13,6 +14,10 @@ MAX_TEXT = 1200
 MAX_LIST = 30
 MAX_HTML_BYTES = 2_000_000
 MAX_ARTICLE_TEXT = 12_000
+MAX_TRANSCRIPT_BYTES = 1_500_000
+MAX_TRANSCRIPT_SEGMENTS = 1200
+TRANSCRIPT_CHUNK_TARGET_MS = 60_000
+TRANSCRIPT_CHUNK_MAX_MS = 90_000
 READABLE_TAGS = {"article", "main", "section", "p", "h1", "h2", "h3", "li", "blockquote"}
 SKIP_TEXT_TAGS = {"script", "style", "noscript", "svg", "nav", "footer", "form", "button"}
 
@@ -227,6 +232,7 @@ def summarize_item(info):
 
     subtitle_langs = sorted((info.get("subtitles") or {}).keys())
     auto_caption_langs = sorted((info.get("automatic_captions") or {}).keys())
+    transcript = extract_transcript(info)
     tags = info.get("tags") or []
     categories = info.get("categories") or []
     formats = info.get("formats") or []
@@ -256,9 +262,220 @@ def summarize_item(info):
         "formatCount": len(formats),
         "subtitleLanguages": subtitle_langs[:MAX_LIST],
         "automaticCaptionLanguages": auto_caption_langs[:MAX_LIST],
+        "chosenTranscriptLanguage": transcript.get("language"),
+        "chosenTranscriptSource": transcript.get("source") or "none",
+        "transcriptFormat": transcript.get("format"),
+        "transcriptSegmentCount": len(transcript.get("segments") or []),
+        "transcriptChunkCount": len(transcript.get("chunks") or []),
+        "transcriptSegments": transcript.get("segments") or [],
+        "transcriptChunks": transcript.get("chunks") or [],
         "categories": categories[:MAX_LIST],
         "tagsPreview": tags[:MAX_LIST],
-        "ragText": rag_text(info, subtitle_langs, auto_caption_langs),
+        "ragText": rag_text(info, subtitle_langs, auto_caption_langs, transcript),
+    }
+
+
+def extract_transcript(info):
+    selected = choose_transcript_candidate(info.get("subtitles") or {}, "manual")
+    if not selected:
+        selected = choose_transcript_candidate(info.get("automatic_captions") or {}, "automatic")
+    if not selected:
+        return {"source": "none", "language": None, "segments": [], "chunks": []}
+    try:
+        raw = fetch_text_url(selected["url"], MAX_TRANSCRIPT_BYTES)
+        segments = parse_caption_text(raw, selected.get("ext"))
+        if not segments:
+            return {"source": selected["source"], "language": selected["language"], "segments": [], "chunks": []}
+        segments = segments[:MAX_TRANSCRIPT_SEGMENTS]
+        chunks = build_transcript_chunks(segments)
+        return {
+            "source": selected["source"],
+            "language": selected["language"],
+            "format": selected.get("ext"),
+            "segments": segments,
+            "chunks": chunks,
+        }
+    except Exception as exc:
+        return {
+            "source": selected["source"],
+            "language": selected["language"],
+            "format": selected.get("ext"),
+            "error": str(exc),
+            "segments": [],
+            "chunks": [],
+        }
+
+
+def choose_transcript_candidate(groups, source):
+    preferred_langs = ["en", "en-US", "en-GB"]
+    languages = []
+    for lang in preferred_langs:
+        if lang in groups:
+            languages.append(lang)
+    languages.extend(lang for lang in sorted(groups.keys()) if lang not in languages and not should_skip_caption_language(lang))
+    for language in languages:
+        candidates = groups.get(language) or []
+        for ext in ("vtt", "srt", "srv3", "ttml", "json3"):
+            for item in candidates:
+                url = item.get("url") if isinstance(item, dict) else None
+                item_ext = (item.get("ext") or "").lower() if isinstance(item, dict) else ""
+                if url and (item_ext == ext or (not item_ext and ext in url.lower())):
+                    return {"source": source, "language": language, "ext": item_ext or ext, "url": url}
+        for item in candidates:
+            url = item.get("url") if isinstance(item, dict) else None
+            if url:
+                return {"source": source, "language": language, "ext": (item.get("ext") or "").lower(), "url": url}
+    return None
+
+
+def should_skip_caption_language(language):
+    lower = (language or "").lower()
+    return "live_chat" in lower or "danmaku" in lower or lower.startswith("rechat")
+
+
+def fetch_text_url(url, max_bytes):
+    request = Request(url, headers={"User-Agent": "Mem/0.3 transcript extractor"})
+    with urlopen(request, timeout=30) as response:
+        raw = response.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            raw = raw[:max_bytes]
+        charset = response.headers.get_content_charset() or "utf-8"
+    return raw.decode(charset, errors="replace")
+
+
+def parse_caption_text(raw, ext):
+    raw = raw or ""
+    lower_ext = (ext or "").lower()
+    if lower_ext == "json3" or raw.lstrip().startswith("{"):
+        return parse_json3_caption(raw)
+    return parse_timed_text(raw)
+
+
+def parse_json3_caption(raw):
+    data = json.loads(raw)
+    segments = []
+    for event in data.get("events") or []:
+        start = event.get("tStartMs")
+        duration = event.get("dDurationMs") or 0
+        parts = []
+        for seg in event.get("segs") or []:
+            value = seg.get("utf8")
+            if value:
+                parts.append(value)
+        text_value = normalize_space("".join(parts))
+        if start is not None and text_value:
+            segments.append({
+                "startMs": int(start),
+                "endMs": int(start + duration),
+                "text": text_value,
+            })
+    return merge_duplicate_caption_segments(segments)
+
+
+def parse_timed_text(raw):
+    segments = []
+    current_start = None
+    current_end = None
+    current_text = []
+    for line in raw.replace("\ufeff", "").splitlines():
+        stripped = line.strip()
+        if not stripped:
+            flush_caption_segment(segments, current_start, current_end, current_text)
+            current_start = None
+            current_end = None
+            current_text = []
+            continue
+        if stripped.upper().startswith("WEBVTT") or stripped.startswith("NOTE") or stripped.startswith("STYLE"):
+            continue
+        if "-->" in stripped:
+            flush_caption_segment(segments, current_start, current_end, current_text)
+            parts = stripped.split("-->", 1)
+            current_start = parse_caption_time(parts[0])
+            current_end = parse_caption_time(parts[1].split()[0])
+            current_text = []
+            continue
+        if current_start is None and stripped.isdigit():
+            continue
+        if current_start is not None:
+            current_text.append(strip_caption_markup(stripped))
+    flush_caption_segment(segments, current_start, current_end, current_text)
+    return merge_duplicate_caption_segments(segments)
+
+
+def flush_caption_segment(segments, start, end, lines):
+    text_value = normalize_space(" ".join(line for line in lines if line))
+    if start is not None and end is not None and text_value:
+        segments.append({"startMs": int(start), "endMs": int(end), "text": text_value})
+
+
+def parse_caption_time(value):
+    cleaned = value.strip().replace(",", ".")
+    match = re.search(r"(?:(\d+):)?(\d{1,2}):(\d{2})(?:\.(\d{1,3}))?", cleaned)
+    if not match:
+        return 0
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    seconds = int(match.group(3) or 0)
+    millis = int((match.group(4) or "0").ljust(3, "0")[:3])
+    return ((hours * 3600 + minutes * 60 + seconds) * 1000) + millis
+
+
+def strip_caption_markup(value):
+    value = re.sub(r"<[^>]+>", " ", value)
+    value = value.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    return value
+
+
+def merge_duplicate_caption_segments(segments):
+    merged = []
+    previous_text = None
+    for segment in segments:
+        text_value = normalize_space(segment.get("text") or "")
+        if not text_value or text_value == previous_text:
+            continue
+        previous_text = text_value
+        merged.append({
+            "startMs": int(segment.get("startMs") or 0),
+            "endMs": int(segment.get("endMs") or segment.get("startMs") or 0),
+            "text": text_value,
+        })
+    return merged
+
+
+def build_transcript_chunks(segments):
+    chunks = []
+    current = []
+    current_start = None
+    current_end = None
+    for segment in segments:
+        start = int(segment.get("startMs") or 0)
+        end = int(segment.get("endMs") or start)
+        if current_start is None:
+            current_start = start
+        candidate_duration = end - current_start
+        if current and candidate_duration > TRANSCRIPT_CHUNK_MAX_MS:
+            chunks.append(transcript_chunk(current_start, current_end, current))
+            overlap = current[-2:] if len(current) > 2 else current[-1:]
+            current = overlap[:]
+            current_start = int(current[0].get("startMs") or start) if current else start
+        current.append(segment)
+        current_end = end
+        if current_end - current_start >= TRANSCRIPT_CHUNK_TARGET_MS:
+            chunks.append(transcript_chunk(current_start, current_end, current))
+            overlap = current[-2:] if len(current) > 2 else current[-1:]
+            current = overlap[:]
+            current_start = int(current[0].get("startMs") or current_end) if current else None
+            current_end = int(current[-1].get("endMs") or current_start) if current else None
+    if current:
+        chunks.append(transcript_chunk(current_start or 0, current_end or current_start or 0, current))
+    return chunks
+
+
+def transcript_chunk(start, end, segments):
+    return {
+        "startMs": int(start or 0),
+        "endMs": int(end or start or 0),
+        "text": normalize_space(" ".join(segment.get("text") or "" for segment in segments)),
     }
 
 
@@ -439,13 +656,17 @@ def article_rag_text(title, author, description, readable_text, url):
     return text("\n\n".join(part for part in parts if part), limit=2500)
 
 
-def rag_text(info, subtitle_langs, auto_caption_langs):
+def rag_text(info, subtitle_langs, auto_caption_langs, transcript=None):
     parts = [
         info.get("title"),
         info.get("uploader"),
         info.get("channel"),
         info.get("description"),
     ]
+    transcript = transcript or {}
+    transcript_chunks = transcript.get("chunks") or []
+    if transcript_chunks:
+        parts.append("Transcript:\n" + "\n".join(chunk.get("text", "") for chunk in transcript_chunks[:8]))
     if subtitle_langs:
         parts.append("Subtitle languages: " + ", ".join(subtitle_langs[:MAX_LIST]))
     if auto_caption_langs:

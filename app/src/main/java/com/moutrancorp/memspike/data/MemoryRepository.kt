@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import java.io.File
@@ -33,6 +34,21 @@ class MemoryRepository(private val database: MemDatabase) {
         ) { sources, jobs, collections, assets ->
             MemoryState(sources = sources, jobs = jobs, collections = collections, assets = assets)
         }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    fun observeSearchResults(query: Flow<String>): Flow<List<SearchResultData>> {
+        return query
+            .map(::toFtsQuery)
+            .distinctUntilChanged()
+            .flatMapLatest { ftsQuery ->
+                if (ftsQuery.isBlank()) {
+                    flowOf(emptyList())
+                } else {
+                    database.chunkSearchDao().observeSearchResults(ftsQuery, 40)
+                }
+            }
+            .map { results -> results.map { it.toSearchResultData() } }
     }
 
     suspend fun createQueuedSource(input: String): QueuedSource {
@@ -152,7 +168,50 @@ class MemoryRepository(private val database: MemDatabase) {
                 ),
             )
         }
-        indexSource(source, result.summary)
+        database.captionTrackDao().deleteForSource(source.id)
+        database.documentChunkDao().deleteForSourceAndTypes(
+            source.id,
+            listOf("metadata", "rag_text", "transcript", "transcript_segment", "article", "document", "note"),
+        )
+        database.chunkSearchDao().deleteForSource(source.id)
+        result.captionTrack?.let { track ->
+            database.captionTrackDao().upsert(
+                CaptionTrackEntity(
+                    id = stableId("caption:${source.id}:${track.source}:${track.language}:${track.format}"),
+                    sourceId = source.id,
+                    language = track.language,
+                    source = track.source,
+                    format = track.format,
+                    segmentCount = track.segmentCount,
+                    chunkCount = track.chunkCount,
+                    createdAt = now,
+                ),
+            )
+        }
+        val extractedChunks = result.chunks.ifEmpty {
+            val text = result.ragText?.takeIf { it.isNotBlank() }
+                ?: listOfNotNull(result.title, result.author, result.summary).joinToString("\n\n")
+            if (text.isBlank()) {
+                emptyList()
+            } else {
+                listOf(
+                    ExtractedContentChunk(
+                        text = text,
+                        chunkType = if (result.ragText.isNullOrBlank()) "metadata" else "rag_text",
+                        language = null,
+                        startOffset = 0,
+                        endOffset = text.length,
+                        startTimeMs = null,
+                        endTimeMs = null,
+                        page = null,
+                        sectionTitle = null,
+                        provider = "extractor",
+                    ),
+                )
+            }
+        }
+        val indexedText = storeChunks(source, extractedChunks, now)
+        indexSource(source, listOfNotNull(result.summary, indexedText).joinToString("\n\n"))
         database.ingestionJobDao().upsert(
             IngestionJobEntity(
                 id = jobId,
@@ -166,23 +225,6 @@ class MemoryRepository(private val database: MemDatabase) {
                 updatedAt = now,
             ),
         )
-        val text = result.ragText?.takeIf { it.isNotBlank() }
-            ?: listOfNotNull(result.title, result.author, result.summary).joinToString("\n\n")
-        if (text.isNotBlank()) {
-            database.documentChunkDao().upsert(
-                DocumentChunkEntity(
-                    id = UUID.randomUUID().toString(),
-                    sourceId = sourceId,
-                    text = text,
-                    chunkType = if (result.ragText.isNullOrBlank()) "metadata" else "rag_text",
-                    startOffset = 0,
-                    endOffset = text.length,
-                    startTimeMs = null,
-                    endTimeMs = null,
-                    createdAt = now,
-                ),
-            )
-        }
     }
 
     suspend fun cancelJob(jobId: String) {
@@ -249,6 +291,7 @@ class MemoryRepository(private val database: MemDatabase) {
             .map(::File)
         database.sourceDao().deleteById(source.id)
         database.sourceSearchDao().deleteForSource(source.id)
+        database.chunkSearchDao().deleteForSource(source.id)
         localFiles.forEach { file -> runCatching { file.delete() } }
         return true
     }
@@ -448,6 +491,53 @@ class MemoryRepository(private val database: MemDatabase) {
         )
     }
 
+    private suspend fun storeChunks(source: SourceEntity, chunks: List<ExtractedContentChunk>, now: Long): String {
+        val durableTags = database.tagDao().tagsForSource(source.id).map { it.name }
+        val tags = (
+            listOf(source.processingState, source.sourceType, source.authState, source.originDomain) +
+                durableTags +
+                chunks.map { it.chunkType }
+            )
+            .filterNotNull()
+            .joinToString(" ")
+        val indexedText = StringBuilder()
+        chunks
+            .filter { it.text.isNotBlank() }
+            .forEachIndexed { index, chunk ->
+                val chunkId = stableId("chunk:${source.id}:${chunk.chunkType}:${chunk.startTimeMs}:${chunk.startOffset}:${chunk.text.contentHash()}:$index")
+                val entity = DocumentChunkEntity(
+                    id = chunkId,
+                    sourceId = source.id,
+                    text = chunk.text,
+                    chunkType = chunk.chunkType,
+                    language = chunk.language,
+                    startOffset = chunk.startOffset,
+                    endOffset = chunk.endOffset,
+                    startTimeMs = chunk.startTimeMs,
+                    endTimeMs = chunk.endTimeMs,
+                    page = chunk.page,
+                    sectionTitle = chunk.sectionTitle,
+                    provider = chunk.provider,
+                    contentHash = chunk.text.contentHash(),
+                    createdAt = now,
+                )
+                database.documentChunkDao().upsert(entity)
+                database.chunkSearchDao().insert(
+                    ChunkSearchEntity(
+                        chunkId = entity.id,
+                        sourceId = source.id,
+                        title = source.title,
+                        body = listOfNotNull(chunk.sectionTitle, chunk.text).joinToString("\n"),
+                        tags = tags,
+                    ),
+                )
+                if (indexedText.length < 12_000) {
+                    indexedText.append(chunk.text.take(1_200)).append('\n')
+                }
+            }
+        return indexedText.toString()
+    }
+
     private suspend fun ensureTags(sourceId: String, names: List<String>) {
         val now = System.currentTimeMillis()
         names
@@ -498,6 +588,44 @@ data class ExtractedSourceData(
     val error: String?,
     val ragText: String?,
     val rawMetadataJson: String,
+    val captionTrack: ExtractedCaptionTrack? = null,
+    val chunks: List<ExtractedContentChunk> = emptyList(),
+)
+
+data class ExtractedCaptionTrack(
+    val language: String?,
+    val source: String,
+    val format: String?,
+    val segmentCount: Int,
+    val chunkCount: Int,
+)
+
+data class ExtractedContentChunk(
+    val text: String,
+    val chunkType: String,
+    val language: String?,
+    val startOffset: Int?,
+    val endOffset: Int?,
+    val startTimeMs: Long?,
+    val endTimeMs: Long?,
+    val page: Int?,
+    val sectionTitle: String?,
+    val provider: String?,
+)
+
+data class SearchResultData(
+    val sourceId: String,
+    val chunkId: String,
+    val title: String,
+    val sourceType: String,
+    val originDomain: String?,
+    val author: String?,
+    val snippet: String,
+    val chunkType: String,
+    val matchReason: String,
+    val startTimeMs: Long?,
+    val endTimeMs: Long?,
+    val savedAt: Long,
 )
 
 fun canonicalize(input: String): String {
@@ -534,11 +662,83 @@ private fun stableId(value: String): String {
     return digest.joinToString("") { "%02x".format(it) }.take(32)
 }
 
+private fun String.contentHash(): String = stableId("content:$this")
+
+private fun ChunkSearchResult.toSearchResultData(): SearchResultData {
+    val timeLabel = startTimeMs?.let { " at ${it.timestampLabel()}" }
+    val reason = when (chunkType) {
+        "transcript" -> "Transcript match${timeLabel.orEmpty()}"
+        "transcript_segment" -> "Transcript segment${timeLabel.orEmpty()}"
+        "article", "document", "note" -> "${chunkType.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }} text match"
+        "visual" -> "Visual observation${timeLabel.orEmpty()}"
+        else -> "Indexed memory match"
+    }
+    return SearchResultData(
+        sourceId = sourceId,
+        chunkId = chunkId,
+        title = title,
+        sourceType = sourceType,
+        originDomain = originDomain,
+        author = author,
+        snippet = body.take(360),
+        chunkType = chunkType,
+        matchReason = reason,
+        startTimeMs = startTimeMs,
+        endTimeMs = endTimeMs,
+        savedAt = savedAt,
+    )
+}
+
+private fun Long.timestampLabel(): String {
+    val totalSeconds = (this / 1000L).coerceAtLeast(0L)
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, seconds) else "%d:%02d".format(minutes, seconds)
+}
+
 private fun toFtsQuery(query: String): String {
-    return query
-        .trim()
-        .split(Regex("\\s+"))
+    val parsed = parseSearchQuery(query)
+    return (parsed.freeTerms + parsed.filterTerms)
         .map { token -> token.filter { it.isLetterOrDigit() || it == '_' || it == '-' } }
         .filter { it.length >= 2 }
+        .distinct()
         .joinToString(" ") { "$it*" }
+}
+
+private data class ParsedSearchQuery(val freeTerms: List<String>, val filterTerms: List<String>)
+
+private fun parseSearchQuery(query: String): ParsedSearchQuery {
+    val freeTerms = mutableListOf<String>()
+    val filterTerms = mutableListOf<String>()
+    query
+        .trim()
+        .split(Regex("\\s+"))
+        .filter { it.isNotBlank() }
+        .forEach { raw ->
+            val token = raw.trim().trim('"')
+            if (token.startsWith("-")) return@forEach
+            val parts = token.split(":", limit = 2)
+            if (parts.size == 2) {
+                val key = parts[0].lowercase(Locale.US)
+                val value = parts[1].lowercase(Locale.US).trim()
+                when (key) {
+                    "type" -> filterTerms.add(value)
+                    "site", "domain" -> filterTerms.add(value.removePrefix("www."))
+                    "status" -> filterTerms.add(value)
+                    "has" -> when (value) {
+                        "transcript" -> filterTerms.add("transcript")
+                        "visual" -> filterTerms.add("visual")
+                        "local_video" -> filterTerms.add("playable")
+                        "auth" -> filterTerms.add("needs")
+                        else -> filterTerms.add(value)
+                    }
+                    "tag", "collection", "author", "channel", "language" -> filterTerms.add(value)
+                    else -> freeTerms.add(value)
+                }
+            } else {
+                freeTerms.add(token)
+            }
+        }
+    return ParsedSearchQuery(freeTerms, filterTerms)
 }

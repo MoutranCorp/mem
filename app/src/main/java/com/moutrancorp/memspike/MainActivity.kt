@@ -159,10 +159,13 @@ import androidx.media3.ui.PlayerView
 import com.moutrancorp.memspike.data.AssetEntity
 import com.moutrancorp.memspike.data.CollectionSummary
 import com.moutrancorp.memspike.data.ExtractedSourceData
+import com.moutrancorp.memspike.data.ExtractedCaptionTrack
+import com.moutrancorp.memspike.data.ExtractedContentChunk
 import com.moutrancorp.memspike.data.IngestionJobEntity
 import com.moutrancorp.memspike.data.MemDatabase
 import com.moutrancorp.memspike.data.MemoryRepository
 import com.moutrancorp.memspike.data.MemoryState
+import com.moutrancorp.memspike.data.SearchResultData
 import com.moutrancorp.memspike.data.SourceEntity
 import com.moutrancorp.memspike.data.authDomain
 import com.moutrancorp.memspike.data.canonicalize
@@ -174,6 +177,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -358,11 +362,18 @@ private class MemAppState(
     val jobs = mutableStateListOf<IngestionJobUi>()
     val memories = mutableStateListOf<MemoryUi>()
     val collections = mutableStateListOf<CollectionUi>()
+    val searchResults = mutableStateListOf<SearchResultUi>()
 
     init {
         scope.launch {
             repository.observeMemoryState(libraryQueryFlow).collect { state ->
                 applyMemoryState(state)
+            }
+        }
+        scope.launch {
+            repository.observeSearchResults(libraryQueryFlow).collect { results ->
+                searchResults.clear()
+                searchResults.addAll(results.map { it.toSearchResultUi() })
             }
         }
     }
@@ -856,6 +867,8 @@ private class YtDlpExtractor(private val activity: Activity) {
                 ragText = null,
                 nextStep = null,
                 prettyText = "Extraction failed:\n${t::class.java.simpleName}: ${t.message}",
+                captionTrack = null,
+                chunks = emptyList(),
             )
         }
     }
@@ -973,6 +986,8 @@ private data class ExtractionResult(
     val ragText: String?,
     val nextStep: String?,
     val prettyText: String,
+    val captionTrack: ExtractedCaptionTrack?,
+    val chunks: List<ExtractedContentChunk>,
 ) {
     fun toExtractedSourceData(input: String): ExtractedSourceData {
         val resolvedUrl = source ?: input
@@ -991,6 +1006,8 @@ private data class ExtractionResult(
             error = error,
             ragText = ragText ?: nextStep,
             rawMetadataJson = prettyText,
+            captionTrack = captionTrack,
+            chunks = chunks,
         )
     }
 
@@ -1003,6 +1020,8 @@ private data class ExtractionResult(
                 json
             }
             val candidate = root.optJSONObject("ragCandidate")
+            val captionTrack = candidate?.captionTrackOrNull()
+            val chunks = candidate?.contentChunksOrEmpty().orEmpty()
             return ExtractionResult(
                 ok = root.optBoolean("ok", false),
                 title = candidate?.optString("title")?.takeIf { it.isNotBlank() },
@@ -1020,10 +1039,89 @@ private data class ExtractionResult(
                 ragText = candidate?.optString("ragText")?.takeIf { it.isNotBlank() },
                 nextStep = root.optString("nextStep").takeIf { it.isNotBlank() },
                 prettyText = pretty,
+                captionTrack = captionTrack,
+                chunks = chunks,
             )
         }
     }
 }
+
+private fun JSONObject.captionTrackOrNull(): ExtractedCaptionTrack? {
+    val source = optString("chosenTranscriptSource").takeIf { it.isNotBlank() && it != "none" } ?: return null
+    val segmentCount = optInt("transcriptSegmentCount", 0)
+    val chunkCount = optInt("transcriptChunkCount", 0)
+    if (segmentCount <= 0 && chunkCount <= 0) return null
+    return ExtractedCaptionTrack(
+        language = optString("chosenTranscriptLanguage").takeIf { it.isNotBlank() },
+        source = source,
+        format = optString("transcriptFormat").takeIf { it.isNotBlank() },
+        segmentCount = segmentCount,
+        chunkCount = chunkCount,
+    )
+}
+
+private fun JSONObject.contentChunksOrEmpty(): List<ExtractedContentChunk> {
+    val chunks = mutableListOf<ExtractedContentChunk>()
+    val transcriptLanguage = optString("chosenTranscriptLanguage").takeIf { it.isNotBlank() }
+    optJSONArray("transcriptChunks")?.let { array ->
+        for (index in 0 until array.length()) {
+            val item = array.optJSONObject(index) ?: continue
+            val text = item.optString("text").takeIf { it.isNotBlank() } ?: continue
+            chunks.add(
+                ExtractedContentChunk(
+                    text = text,
+                    chunkType = "transcript",
+                    language = transcriptLanguage,
+                    startOffset = null,
+                    endOffset = null,
+                    startTimeMs = item.optLongOrNull("startMs"),
+                    endTimeMs = item.optLongOrNull("endMs"),
+                    page = null,
+                    sectionTitle = "Transcript",
+                    provider = "yt-dlp",
+                ),
+            )
+        }
+    }
+    optString("contentText").takeIf { it.isNotBlank() }?.let { text ->
+        chunks.addAll(text.toTextChunks("article", optString("language").takeIf { it.isNotBlank() }, "Article text", "article_metadata"))
+    }
+    if (chunks.isEmpty()) {
+        optString("ragText").takeIf { it.isNotBlank() }?.let { text ->
+            chunks.addAll(text.toTextChunks("rag_text", transcriptLanguage, "Metadata", "yt-dlp"))
+        }
+    }
+    return chunks
+}
+
+private fun String.toTextChunks(chunkType: String, language: String?, sectionTitle: String?, provider: String): List<ExtractedContentChunk> {
+    val normalized = trim()
+    if (normalized.isBlank()) return emptyList()
+    val chunks = mutableListOf<ExtractedContentChunk>()
+    var offset = 0
+    normalized.chunked(1_500).forEachIndexed { index, part ->
+        val start = offset
+        val end = offset + part.length
+        chunks.add(
+            ExtractedContentChunk(
+                text = part.trim(),
+                chunkType = chunkType,
+                language = language,
+                startOffset = start,
+                endOffset = end,
+                startTimeMs = null,
+                endTimeMs = null,
+                page = null,
+                sectionTitle = if (index == 0) sectionTitle else "$sectionTitle ${index + 1}",
+                provider = provider,
+            ),
+        )
+        offset = end
+    }
+    return chunks
+}
+
+private fun JSONObject.optLongOrNull(name: String): Long? = if (has(name) && !isNull(name)) optLong(name) else null
 
 private fun String.firstUrlOrNull(): String? {
     val match = Regex("""https?://[^\s<>"']+|www\.[^\s<>"']+""", RegexOption.IGNORE_CASE)
@@ -1520,6 +1618,30 @@ private data class CollectionUi(
     val updatedAt: Long,
 )
 
+private data class SearchResultUi(
+    val sourceId: String,
+    val chunkId: String,
+    val title: String,
+    val source: String,
+    val snippet: String,
+    val matchReason: String,
+    val chunkType: String,
+    val startTimeLabel: String?,
+)
+
+private fun SearchResultData.toSearchResultUi(): SearchResultUi {
+    return SearchResultUi(
+        sourceId = sourceId,
+        chunkId = chunkId,
+        title = title,
+        source = originDomain ?: author ?: sourceType,
+        snippet = snippet,
+        matchReason = matchReason,
+        chunkType = chunkType,
+        startTimeLabel = startTimeMs?.timestampLabel(),
+    )
+}
+
 private fun SourceEntity.toMemoryUi(thumbnailAsset: AssetEntity?, playbackAsset: AssetEntity?): MemoryUi {
     val normalizedType = if (sourceType == "needs_auth") "link" else sourceType
     val typeLabel = normalizedType.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
@@ -1564,6 +1686,14 @@ private fun Long.durationLabel(): String {
     } else {
         "%d:%02d".format(minutes, seconds)
     }
+}
+
+private fun Long.timestampLabel(): String {
+    val totalSeconds = (this / 1000L).coerceAtLeast(0L)
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, seconds) else "%d:%02d".format(minutes, seconds)
 }
 
 private fun CollectionSummary.toCollectionUi(): CollectionUi {
@@ -1963,7 +2093,10 @@ private fun MemHomeScreen(state: MemAppState) {
         item {
             CommandPanel(
                 isExtracting = state.isExtracting,
-                onOpenAgent = { state.logOutput = "Agent shell opened from the command field. Tool wiring comes after RAG/search." },
+                onSearch = { query ->
+                    state.updateLibraryQuery(query)
+                    state.selectedTab = MainTab.Library
+                },
             )
         }
         item {
@@ -2079,6 +2212,13 @@ private fun LibraryScreen(state: MemAppState) {
                 fontSize = 13.sp,
             )
             Spacer(modifier = Modifier.height(MemTokens.spacing.sm))
+            SearchResultsStrip(
+                results = state.searchResults,
+                onOpen = { result ->
+                    state.memories.firstOrNull { it.id == result.sourceId }?.let(state::openSourceDetail)
+                },
+            )
+            Spacer(modifier = Modifier.height(MemTokens.spacing.md))
         }
         when (state.appearance.libraryMode) {
             LibraryMode.Feed -> LibraryFeed(
@@ -2103,6 +2243,73 @@ private fun LibraryScreen(state: MemAppState) {
             )
         }
     }
+}
+
+@Composable
+private fun SearchResultsStrip(results: List<SearchResultUi>, onOpen: (SearchResultUi) -> Unit) {
+    if (results.isEmpty()) {
+        SurfaceCard(container = MemTokens.colors.surfaceMuted) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(MemTokens.spacing.md),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(Icons.Rounded.Search, contentDescription = null, tint = MemTokens.colors.textTertiary)
+                Spacer(modifier = Modifier.width(MemTokens.spacing.sm))
+                Text("No chunk-level citations yet. Try another term or index sources with transcripts.", color = MemTokens.colors.textSecondary, fontSize = 13.sp)
+            }
+        }
+        return
+    }
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
+        items(results, key = { it.chunkId }) { result ->
+            SearchResultCard(result = result, onClick = { onOpen(result) })
+        }
+    }
+}
+
+@Composable
+private fun SearchResultCard(result: SearchResultUi, onClick: () -> Unit) {
+    SurfaceCard(
+        modifier = Modifier
+            .width(286.dp)
+            .clickable(onClick = onClick),
+        container = MemTokens.colors.surfaceMuted,
+    ) {
+        Column(
+            modifier = Modifier.padding(MemTokens.spacing.md),
+            verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = MemTokens.colors.accent, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
+                Text(result.matchReason, color = MemTokens.colors.accent, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text(result.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(result.snippet, color = MemTokens.colors.textSecondary, fontSize = 13.sp, lineHeight = 18.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs), verticalAlignment = Alignment.CenterVertically) {
+                MetadataTiny(result.source)
+                result.startTimeLabel?.let { MetadataTiny(it) }
+                MetadataTiny(result.chunkType)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MetadataTiny(label: String) {
+    Text(
+        text = label,
+        color = MemTokens.colors.textTertiary,
+        fontSize = 11.sp,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .clip(MemTokens.shapes.pill)
+            .background(MemTokens.colors.surface)
+            .padding(horizontal = MemTokens.spacing.xs, vertical = 2.dp),
+    )
 }
 
 @Composable
@@ -2155,7 +2362,8 @@ private fun HeaderRow(title: String, subtitle: String, onAppearance: () -> Unit)
 }
 
 @Composable
-private fun CommandPanel(isExtracting: Boolean, onOpenAgent: () -> Unit) {
+private fun CommandPanel(isExtracting: Boolean, onSearch: (String) -> Unit) {
+    var query by remember { mutableStateOf("") }
     SurfaceCard(
         modifier = Modifier.fillMaxWidth(),
         container = MemTokens.colors.textPrimary,
@@ -2182,20 +2390,31 @@ private fun CommandPanel(isExtracting: Boolean, onOpenAgent: () -> Unit) {
                     .fillMaxWidth()
                     .clip(MemTokens.shapes.lg)
                     .background(Color.White.copy(alpha = 0.09f))
-                    .clickable(onClick = onOpenAgent)
                     .padding(MemTokens.spacing.md),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = "Ask or find anything...",
-                    color = Color.White.copy(alpha = 0.72f),
-                    fontSize = 16.sp,
+                BasicTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    singleLine = true,
+                    textStyle = TextStyle(color = Color.White, fontSize = 16.sp),
+                    cursorBrush = SolidColor(Color.White),
                     modifier = Modifier.weight(1f),
+                    decorationBox = { innerTextField ->
+                        Box {
+                            if (query.isBlank()) {
+                                Text("Ask or find anything...", color = Color.White.copy(alpha = 0.72f), fontSize = 16.sp)
+                            }
+                            innerTextField()
+                        }
+                    },
                 )
                 if (isExtracting) {
                     CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp, color = Color.White)
                 } else {
-                    Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = Color.White)
+                    IconButton(onClick = { if (query.isNotBlank()) onSearch(query) }) {
+                        Icon(Icons.Rounded.Search, contentDescription = "Search memory", tint = Color.White)
+                    }
                 }
             }
         }

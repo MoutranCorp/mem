@@ -283,10 +283,18 @@ Exit criteria:
 
 ## Immediate Next Build Sequence
 
-1. Commit the mockups and planning docs.
-2. Create a production branch or keep `main` as the product line and preserve
-   spike history through tags.
-3. Add Kotlin and Compose without removing the working extractor.
-4. Rebuild the current spike UI as a Compose Capture/Inbox prototype.
-5. Add Room and persist source/job state.
-6. Move extraction output into normalized source records.
+1. Finish transcript/caption extraction and parsing into timestamped chunks.
+   Started with yt-dlp subtitle URL selection, WebVTT/SRT/JSON3 parsing, and
+   durable transcript chunk indexing.
+2. Expand deterministic chunk search from the command field and Library query.
+   Started with chunk-level FTS, simple filter token parsing, and cited result
+   cards.
+3. Add richer source-detail transcript/article layouts with jump targets.
+4. Add benchmark fixtures for saved videos, articles, notes, PDFs, and image
+   memories.
+5. Implement the embedding provider and vector index interfaces with a first
+   local/cloud provider behind user-visible settings.
+6. Implement the first agent tool set: search memory, get source/chunks, and
+   draft collection/playlist actions with preview/undo.
+7. Add visual observations for local/authorized videos so Mem can answer visual
+   event queries that transcripts cannot cover.
