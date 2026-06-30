@@ -158,6 +158,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.moutrancorp.memspike.data.AssetEntity
 import com.moutrancorp.memspike.data.CollectionSummary
+import com.moutrancorp.memspike.data.ContentChunkData
 import com.moutrancorp.memspike.data.ExtractedSourceData
 import com.moutrancorp.memspike.data.ExtractedCaptionTrack
 import com.moutrancorp.memspike.data.ExtractedContentChunk
@@ -363,6 +364,7 @@ private class MemAppState(
     val memories = mutableStateListOf<MemoryUi>()
     val collections = mutableStateListOf<CollectionUi>()
     val searchResults = mutableStateListOf<SearchResultUi>()
+    val selectedMemoryChunks = mutableStateListOf<ContentChunkUi>()
 
     init {
         scope.launch {
@@ -576,6 +578,21 @@ private class MemAppState(
         }
     }
 
+    fun createCollectionFromSearchResults() {
+        val query = libraryQuery.trim()
+        val sourceIds = searchResults.map { it.sourceId }.distinct().take(50)
+        if (query.isBlank() || sourceIds.isEmpty()) {
+            logOutput = "Search first, then Mem can draft a collection from cited results."
+            return
+        }
+        scope.launch {
+            val title = "Search: ${query.take(42)}"
+            sourceIds.forEach { sourceId -> repository.addSourceToCollection(sourceId, title) }
+            logOutput = "Created collection draft \"$title\" with ${sourceIds.size} cited source${if (sourceIds.size == 1) "" else "s"}."
+            Toast.makeText(context, "Collection draft created", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     fun tagForReview(memory: MemoryUi) {
         scope.launch {
             repository.tagSource(memory.id)
@@ -649,10 +666,19 @@ private class MemAppState(
 
     fun openSourceDetail(memory: MemoryUi) {
         selectedMemory = memory
+        selectedMemoryChunks.clear()
+        scope.launch {
+            val chunks = withContext(Dispatchers.IO) { repository.chunksForSource(memory.id) }
+            if (selectedMemory?.id == memory.id) {
+                selectedMemoryChunks.clear()
+                selectedMemoryChunks.addAll(chunks.map { it.toContentChunkUi() })
+            }
+        }
     }
 
     fun closeSourceDetail() {
         selectedMemory = null
+        selectedMemoryChunks.clear()
     }
 
     fun closePlayer() {
@@ -1629,6 +1655,15 @@ private data class SearchResultUi(
     val startTimeLabel: String?,
 )
 
+private data class ContentChunkUi(
+    val id: String,
+    val text: String,
+    val chunkType: String,
+    val label: String,
+    val startTimeLabel: String?,
+    val provider: String?,
+)
+
 private fun SearchResultData.toSearchResultUi(): SearchResultUi {
     return SearchResultUi(
         sourceId = sourceId,
@@ -1639,6 +1674,32 @@ private fun SearchResultData.toSearchResultUi(): SearchResultUi {
         matchReason = matchReason,
         chunkType = chunkType,
         startTimeLabel = startTimeMs?.timestampLabel(),
+    )
+}
+
+private fun ContentChunkData.toContentChunkUi(): ContentChunkUi {
+    val time = startTimeMs?.timestampLabel()
+    val label = buildList {
+        add(
+            when (chunkType) {
+                "transcript" -> "Transcript"
+                "article" -> "Article"
+                "document" -> "Document"
+                "note" -> "Note"
+                "visual" -> "Visual"
+                else -> chunkType.replaceFirstChar { if (it.isLowerCase()) it.titlecase() else it.toString() }
+            },
+        )
+        language?.takeIf { it.isNotBlank() }?.let { add(it) }
+        page?.let { add("Page $it") }
+    }.joinToString(" - ")
+    return ContentChunkUi(
+        id = id,
+        text = text,
+        chunkType = chunkType,
+        label = label,
+        startTimeLabel = time,
+        provider = provider,
     )
 }
 
@@ -2028,6 +2089,7 @@ private fun MemScaffold(state: MemAppState) {
         ) {
             SourceDetailSheet(
                 memory = memory,
+                chunks = state.selectedMemoryChunks,
                 seekBackSeconds = state.appearance.seekBackSeconds,
                 seekForwardSeconds = state.appearance.seekForwardSeconds,
                 onDismiss = state::closeSourceDetail,
@@ -2219,6 +2281,12 @@ private fun LibraryScreen(state: MemAppState) {
                 },
             )
             Spacer(modifier = Modifier.height(MemTokens.spacing.md))
+            LocalAgentSearchPanel(
+                query = state.libraryQuery,
+                results = state.searchResults,
+                onCreateCollection = state::createCollectionFromSearchResults,
+            )
+            Spacer(modifier = Modifier.height(MemTokens.spacing.md))
         }
         when (state.appearance.libraryMode) {
             LibraryMode.Feed -> LibraryFeed(
@@ -2292,6 +2360,62 @@ private fun SearchResultCard(result: SearchResultUi, onClick: () -> Unit) {
                 MetadataTiny(result.source)
                 result.startTimeLabel?.let { MetadataTiny(it) }
                 MetadataTiny(result.chunkType)
+            }
+        }
+    }
+}
+
+@Composable
+private fun LocalAgentSearchPanel(
+    query: String,
+    results: List<SearchResultUi>,
+    onCreateCollection: () -> Unit,
+) {
+    val sourceCount = results.map { it.sourceId }.distinct().size
+    val transcriptCount = results.count { it.chunkType == "transcript" }
+    val contextTypes = results.map { it.chunkType }.distinct().take(4).joinToString(", ").ifBlank { "none" }
+    SurfaceCard(container = MemTokens.colors.textPrimary, border = null) {
+        Column(
+            modifier = Modifier.padding(MemTokens.spacing.md),
+            verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Rounded.AutoAwesome, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
+                Text("Local agent search", color = Color.White, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text("${results.size} cites", color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
+            }
+            Text(
+                text = if (results.isEmpty()) {
+                    "I could not find indexed chunks for \"$query\" yet. Capture sources with transcripts/articles or try deterministic filters like type:video, site:youtube.com, has:transcript."
+                } else {
+                    "I found $sourceCount source${if (sourceCount == 1) "" else "s"} with grounded chunks for \"$query\". Context types: $contextTypes. Transcript-backed citations: $transcriptCount."
+                },
+                color = Color.White.copy(alpha = 0.78f),
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+            )
+            if (results.isNotEmpty()) {
+                results.take(3).forEach { result ->
+                    Text(
+                        text = "- ${result.title}: ${result.matchReason}",
+                        color = Color.White.copy(alpha = 0.72f),
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                OutlinedButton(
+                    onClick = onCreateCollection,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MemTokens.shapes.pill,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.28f)),
+                ) {
+                    Icon(Icons.Rounded.Bookmarks, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
+                    Text("Draft collection from citations")
+                }
             }
         }
     }
@@ -2716,6 +2840,7 @@ private fun PlaybackStepSetting(label: String, value: Int, onChange: (Int) -> Un
 @Composable
 private fun SourceDetailSheet(
     memory: MemoryUi,
+    chunks: List<ContentChunkUi>,
     seekBackSeconds: Int,
     seekForwardSeconds: Int,
     onDismiss: () -> Unit,
@@ -2810,6 +2935,8 @@ private fun SourceDetailSheet(
                 Text(memory.summary, color = MemTokens.colors.textSecondary, fontSize = 14.sp, lineHeight = 20.sp)
             }
         }
+
+        IndexedContextPanel(chunks = chunks)
 
         SurfaceCard {
             Column(
@@ -2908,6 +3035,53 @@ private fun SourceDetailSheet(
             Icon(Icons.Rounded.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
             Text("Delete memory")
+        }
+    }
+}
+
+@Composable
+private fun IndexedContextPanel(chunks: List<ContentChunkUi>) {
+    SurfaceCard {
+        Column(
+            modifier = Modifier.padding(MemTokens.spacing.md),
+            verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Indexed context", color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text("${chunks.size}", color = MemTokens.colors.textTertiary, fontSize = 12.sp)
+            }
+            if (chunks.isEmpty()) {
+                Text(
+                    "No transcript or document chunks have been indexed for this memory yet.",
+                    color = MemTokens.colors.textSecondary,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                )
+            } else {
+                chunks.take(8).forEachIndexed { index, chunk ->
+                    if (index > 0) DividerLine()
+                    Column(verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
+                            MetadataTiny(chunk.label)
+                            chunk.startTimeLabel?.let { MetadataTiny(it) }
+                            chunk.provider?.let { MetadataTiny(it) }
+                        }
+                        SelectionContainer {
+                            Text(
+                                text = chunk.text,
+                                color = MemTokens.colors.textSecondary,
+                                fontSize = 13.sp,
+                                lineHeight = 18.sp,
+                                maxLines = 5,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                if (chunks.size > 8) {
+                    Text("${chunks.size - 8} more indexed chunks available for search.", color = MemTokens.colors.textTertiary, fontSize = 12.sp)
+                }
+            }
         }
     }
 }

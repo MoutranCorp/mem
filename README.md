@@ -129,16 +129,21 @@ Immediate next steps:
 3. Expand source/detail search to query transcript/article chunks, not just
    source summaries.
    Started with chunk-level FTS and cited search result cards in Library.
+   Source detail now loads indexed chunks so transcript/article context is
+   inspectable from the memory itself.
 4. Add deterministic search filters and match explanations from the command
    field.
    Started with simple `type:`, `site:`, `domain:`, `status:`, and `has:`
-   filter tokens routed into FTS tags.
+   filter tokens routed into FTS tags, quoted phrase handling, and match
+   reason cards.
 5. Add an embedding/index interface so every extracted record can become a RAG
    document with stable IDs, source URL, timestamp, title, tags, and transcript
    segments.
    Started with provider interfaces for embeddings, vector search, and agent
    tool execution.
 6. Add the first agent search tool with cited results and action previews.
+   Started with a local agent search panel that summarizes grounded citations
+   and can draft a collection from the cited source set.
 7. Build visual indexing for local/authorized videos so Mem can answer queries
    about what happens visually, not only what is spoken.
 8. Harden Instagram auth with session validation, expiry messaging, and

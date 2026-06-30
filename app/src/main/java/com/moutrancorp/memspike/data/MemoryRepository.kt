@@ -51,6 +51,23 @@ class MemoryRepository(private val database: MemDatabase) {
             .map { results -> results.map { it.toSearchResultData() } }
     }
 
+    suspend fun chunksForSource(sourceId: String, limit: Int = 80): List<ContentChunkData> {
+        return database.documentChunkDao().findBySource(sourceId, limit).map { chunk ->
+            ContentChunkData(
+                id = chunk.id,
+                sourceId = chunk.sourceId,
+                text = chunk.text,
+                chunkType = chunk.chunkType,
+                language = chunk.language,
+                startTimeMs = chunk.startTimeMs,
+                endTimeMs = chunk.endTimeMs,
+                page = chunk.page,
+                sectionTitle = chunk.sectionTitle,
+                provider = chunk.provider,
+            )
+        }
+    }
+
     suspend fun createQueuedSource(input: String): QueuedSource {
         val now = System.currentTimeMillis()
         val canonicalUrl = canonicalize(input)
@@ -628,6 +645,19 @@ data class SearchResultData(
     val savedAt: Long,
 )
 
+data class ContentChunkData(
+    val id: String,
+    val sourceId: String,
+    val text: String,
+    val chunkType: String,
+    val language: String?,
+    val startTimeMs: Long?,
+    val endTimeMs: Long?,
+    val page: Int?,
+    val sectionTitle: String?,
+    val provider: String?,
+)
+
 fun canonicalize(input: String): String {
     val trimmed = input.trim()
     return runCatching {
@@ -699,19 +729,28 @@ private fun Long.timestampLabel(): String {
 
 private fun toFtsQuery(query: String): String {
     val parsed = parseSearchQuery(query)
-    return (parsed.freeTerms + parsed.filterTerms)
+    return (parsed.phrases + parsed.freeTerms + parsed.filterTerms)
         .map { token -> token.filter { it.isLetterOrDigit() || it == '_' || it == '-' } }
         .filter { it.length >= 2 }
         .distinct()
         .joinToString(" ") { "$it*" }
 }
 
-private data class ParsedSearchQuery(val freeTerms: List<String>, val filterTerms: List<String>)
+private data class ParsedSearchQuery(
+    val phrases: List<String>,
+    val freeTerms: List<String>,
+    val filterTerms: List<String>,
+)
 
 private fun parseSearchQuery(query: String): ParsedSearchQuery {
     val freeTerms = mutableListOf<String>()
     val filterTerms = mutableListOf<String>()
-    query
+    val phrases = Regex("\"([^\"]+)\"")
+        .findAll(query)
+        .mapNotNull { it.groupValues.getOrNull(1)?.trim()?.takeIf(String::isNotBlank) }
+        .toList()
+    val withoutPhrases = query.replace(Regex("\"([^\"]+)\""), " ")
+    withoutPhrases
         .trim()
         .split(Regex("\\s+"))
         .filter { it.isNotBlank() }
@@ -734,11 +773,12 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
                         else -> filterTerms.add(value)
                     }
                     "tag", "collection", "author", "channel", "language" -> filterTerms.add(value)
+                    "duration", "saved", "date" -> Unit
                     else -> freeTerms.add(value)
                 }
             } else {
                 freeTerms.add(token)
             }
         }
-    return ParsedSearchQuery(freeTerms, filterTerms)
+    return ParsedSearchQuery(phrases, freeTerms, filterTerms)
 }

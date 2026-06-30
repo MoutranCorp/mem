@@ -288,7 +288,9 @@ Exit criteria:
    durable transcript chunk indexing.
 2. Expand deterministic chunk search from the command field and Library query.
    Started with chunk-level FTS, simple filter token parsing, and cited result
-   cards.
+   cards. The source detail sheet now loads indexed chunks for the selected
+   source, and Library search includes a local agent panel with citation
+   summaries and a collection-draft action.
 3. Add richer source-detail transcript/article layouts with jump targets.
 4. Add benchmark fixtures for saved videos, articles, notes, PDFs, and image
    memories.
