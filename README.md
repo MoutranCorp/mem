@@ -117,24 +117,29 @@ The production direction is documented in:
 - `docs/design-direction.md`
 - `docs/design-system-customization.md`
 - `docs/mvp-build-roadmap.md`
+- `docs/rag-agent-spike-2026-06-30.md`
 
 Immediate next steps:
 
-1. Add local thumbnail generation/caching for downloaded videos.
-2. Expand source detail into full article/document layouts.
-3. Build collection detail screens and richer tag editing.
-4. Expand FTS indexing to transcript/caption chunks and richer ranking.
-5. Harden Instagram auth with session validation, expiry messaging, and
-   encrypted storage.
-6. Add OCR for scanned/image-only PDFs and imported images.
-7. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
-   libs and pass their paths to `yt-dlp` through `ffmpeg_location`.
-8. Move long downloads to user-initiated data transfer jobs and media processing
-   work to a foreground service with the `mediaProcessing` type.
-9. Add transcript/caption fetching behind an explicit rights confirmation.
-10. Add an embedding/index interface so every extracted record becomes a RAG
+1. Add transcript/caption extraction through yt-dlp without downloading media.
+2. Parse subtitles into timestamped transcript segments and durable chunks.
+3. Expand source/detail search to query transcript/article chunks, not just
+   source summaries.
+4. Add deterministic search filters and match explanations from the command
+   field.
+5. Add an embedding/index interface so every extracted record can become a RAG
    document with stable IDs, source URL, timestamp, title, tags, and transcript
    segments.
+6. Add the first agent search tool with cited results and action previews.
+7. Build visual indexing for local/authorized videos so Mem can answer queries
+   about what happens visually, not only what is spoken.
+8. Harden Instagram auth with session validation, expiry messaging, and
+   encrypted storage.
+9. Add OCR for scanned/image-only PDFs and imported images.
+10. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
+   libs and pass their paths to `yt-dlp` through `ffmpeg_location`.
+11. Move long downloads to user-initiated data transfer jobs and media processing
+   work to a foreground service with the `mediaProcessing` type.
 
 ## Play Store Guardrails
 

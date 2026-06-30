@@ -180,16 +180,23 @@ Exit criteria:
 
 Goal: make "ask/find anything" fast and reliable.
 
+The detailed technical path is captured in
+`docs/rag-agent-spike-2026-06-30.md`. The important correction is that video
+RAG must start with transcripts/captions, but use cases like "videos where
+someone falls" also require a separate visual indexing pipeline.
+
 Deliverables:
 
-- SQLite FTS5 index.
+- Transcript/caption extraction without media download.
+- Timestamped transcript/document chunks.
+- Chunk full-text index.
 - Query parser for filters and natural phrases.
-- Transcript/document chunking.
 - Ranking function.
 - Embedding provider interface.
 - First embedding implementation.
 - Search result citations.
 - Benchmark dataset generator.
+- Visual observation index for local/authorized videos.
 
 Exit criteria:
 
