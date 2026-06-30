@@ -513,7 +513,10 @@ def search(chunks: list[Chunk], query: str) -> list[Result]:
             chunk=chunk,
             retrieval_mode="semantic",
             score=score,
-            rank_signals=f"semantic:{score:.2f}; window={LOCAL_SEMANTIC_EXACT_SCAN_LIMIT}; scanned={len(semantic_window)}",
+            rank_signals=(
+                f"semantic:{score:.2f}; provider=local; model=hash-v1-text-128; "
+                f"index=room_exact_scan; window={LOCAL_SEMANTIC_EXACT_SCAN_LIMIT}; scanned={len(semantic_window)}"
+            ),
         )
         add_result(results, parsed, result, index)
 

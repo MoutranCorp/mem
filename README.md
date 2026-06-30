@@ -151,12 +151,13 @@ Immediate next steps:
    segments.
    Started with provider interfaces for embeddings, vector search, and agent
    tool execution. Room now persists chunk embeddings and runs a local
-   deterministic exact-scan semantic fallback, with hybrid keyword/semantic
-   fusion in cited search results. The app now exposes the active AI/RAG
-   pipeline status and RAG index health in settings so local fallbacks,
-   embedding coverage, chunk depth, visual observations, and future production
-   providers are visible instead of implicit. The local semantic fallback now
-   uses an explicit 10k embedding scan window and reports scanned/window
+   deterministic semantic fallback through `LocalHashEmbeddingProvider` and
+   `RoomExactScanVectorIndex`, with hybrid keyword/semantic fusion in cited
+   search results. The app now exposes the active AI/RAG pipeline status and
+   RAG index health in settings so local fallbacks, embedding coverage, chunk
+   depth, visual observations, and future production providers are visible
+   instead of implicit. The local semantic fallback now uses an explicit 10k
+   embedding scan window and reports provider/model/index/scanned/window
    diagnostics in rank signals and index health.
 6. Add the first agent search tool with cited results and action previews.
    Started with a local agent search panel that summarizes grounded citations

@@ -102,7 +102,7 @@ Expected:
   required durable asset role.
 - Quoted phrases remain searchable as meaningful terms.
 - Cited result cards expose rank signals for debugging keyword, semantic,
-  recency, filter, and hybrid behavior.
+  recency, filter, provider/model, vector index, and hybrid behavior.
 
 ### Visual Memory Placeholder
 

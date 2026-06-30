@@ -2,6 +2,12 @@ package com.moutrancorp.memspike.data
 
 import com.moutrancorp.memspike.ai.AgentToolCall
 import com.moutrancorp.memspike.ai.AgentToolResult
+import com.moutrancorp.memspike.ai.EmbeddingInput
+import com.moutrancorp.memspike.ai.EmbeddingProvider
+import com.moutrancorp.memspike.ai.EmbeddingVector
+import com.moutrancorp.memspike.ai.LocalHashEmbeddingProvider
+import com.moutrancorp.memspike.ai.VectorHit
+import com.moutrancorp.memspike.ai.VectorIndex
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -16,7 +22,6 @@ import java.nio.ByteOrder
 import java.net.URI
 import java.security.MessageDigest
 import java.util.Calendar
-import kotlin.math.sqrt
 import java.util.Locale
 import java.util.UUID
 import org.json.JSONArray
@@ -31,6 +36,9 @@ private const val FILTER_ONLY_SCAN_LIMIT = 10_000
 private const val SEARCH_RESULT_LIMIT = 40
 
 class MemoryRepository(private val database: MemDatabase) {
+    private val embeddingProvider: EmbeddingProvider = LocalHashEmbeddingProvider()
+    private val vectorIndex: VectorIndex = RoomExactScanVectorIndex(database.chunkEmbeddingDao(), LOCAL_SEMANTIC_EXACT_SCAN_LIMIT)
+
     fun availableMemoryTools(): List<String> {
         return listOf(
             "search_memory",
@@ -169,18 +177,28 @@ class MemoryRepository(private val database: MemDatabase) {
     }
 
     private suspend fun semanticSearch(rawQuery: String, limit: Int): List<SearchResultData> {
-        val queryVector = localEmbedding(rawQuery)
-        val candidates = database.chunkEmbeddingDao()
-            .candidates("text", LOCAL_SEMANTIC_EXACT_SCAN_LIMIT)
-        return candidates
-            .mapNotNull { candidate ->
-                val score = cosineSimilarity(queryVector, candidate.vector.toFloatVector(candidate.dimensions))
-                if (score < 0.08f) return@mapNotNull null
-                candidate.toSearchResultData(score).copy(
-                    rankSignals = "semantic:${"%.2f".format(score)}; window=$LOCAL_SEMANTIC_EXACT_SCAN_LIMIT; scanned=${candidates.size}",
+        val queryVector = embeddingProvider.embed(
+            listOf(EmbeddingInput(id = "query:${stableId(rawQuery)}", text = rawQuery, type = "text")),
+        ).firstOrNull() ?: return emptyList()
+        val hits = vectorIndex.search(queryVector, limit)
+        if (hits.isEmpty()) return emptyList()
+        val byChunkId = database.chunkEmbeddingDao()
+            .candidatesByChunkIds("text", hits.map { it.id })
+            .associateBy { it.chunkId }
+        return hits
+            .mapNotNull { hit ->
+                val candidate = byChunkId[hit.id] ?: return@mapNotNull null
+                candidate.toSearchResultData(hit.score).copy(
+                    rankSignals = buildString {
+                        append("semantic:${"%.2f".format(hit.score)}")
+                        append("; provider=${hit.provider}")
+                        append("; model=${hit.model}")
+                        hit.diagnostics["index"]?.let { append("; index=$it") }
+                        hit.diagnostics["window"]?.let { append("; window=$it") }
+                        hit.diagnostics["scanned"]?.let { append("; scanned=$it") }
+                    },
                 )
             }
-            .sortedByDescending { it.rankScore }
             .take(limit)
     }
 
@@ -1068,17 +1086,22 @@ class MemoryRepository(private val database: MemDatabase) {
                         tags = tags,
                     ),
                 )
-                database.chunkEmbeddingDao().upsert(
-                    ChunkEmbeddingEntity(
-                        id = stableId("embedding:${entity.id}:$LOCAL_EMBEDDING_MODEL_ID"),
-                        chunkId = entity.id,
-                        sourceId = source.id,
-                        modelId = LOCAL_EMBEDDING_MODEL_ID,
-                        embeddingType = "text",
-                        dimensions = LOCAL_EMBEDDING_DIMENSIONS,
-                        vector = localEmbedding(chunk.text).toByteArrayVector(),
-                        contentHash = entity.contentHash ?: chunk.text.contentHash(),
-                        createdAt = now,
+                vectorIndex.upsert(
+                    embeddingProvider.embed(
+                        listOf(
+                            EmbeddingInput(
+                                id = entity.id,
+                                text = chunk.text,
+                                type = "text",
+                                metadata = mapOf(
+                                    "sourceId" to source.id,
+                                    "modelId" to LOCAL_EMBEDDING_MODEL_ID,
+                                    "embeddingType" to "text",
+                                    "contentHash" to (entity.contentHash ?: chunk.text.contentHash()),
+                                    "createdAt" to now.toString(),
+                                ),
+                            ),
+                        ),
                     ),
                 )
                 if (indexedText.length < 12_000) {
@@ -1559,56 +1582,54 @@ private fun deterministicSourceSummary(snapshot: SourceSnapshot, chunks: List<Co
     }
 }
 
-private fun localEmbedding(text: String): FloatArray {
-    val vector = FloatArray(LOCAL_EMBEDDING_DIMENSIONS)
-    tokenizeForEmbedding(text).forEach { token ->
-        val hash = stableId("embed:$token")
-        val bucket = hash.take(8).toLong(16).mod(LOCAL_EMBEDDING_DIMENSIONS)
-        val sign = if (hash.drop(8).take(2).toInt(16) % 2 == 0) 1f else -1f
-        val weight = when {
-            token.length > 10 -> 1.35f
-            token.length > 6 -> 1.15f
-            else -> 1f
+private class RoomExactScanVectorIndex(
+    private val dao: ChunkEmbeddingDao,
+    private val scanLimit: Int,
+) : VectorIndex {
+    override suspend fun upsert(vectors: List<EmbeddingVector>) {
+        vectors.forEach { vector ->
+            val sourceId = vector.metadata["sourceId"] ?: return@forEach
+            val modelId = vector.metadata["modelId"] ?: "${vector.provider}_${vector.model}"
+            val embeddingType = vector.metadata["embeddingType"] ?: "text"
+            val contentHash = vector.metadata["contentHash"] ?: return@forEach
+            val createdAt = vector.metadata["createdAt"]?.toLongOrNull() ?: System.currentTimeMillis()
+            dao.upsert(
+                ChunkEmbeddingEntity(
+                    id = stableId("embedding:${vector.inputId}:$modelId"),
+                    chunkId = vector.inputId,
+                    sourceId = sourceId,
+                    modelId = modelId,
+                    embeddingType = embeddingType,
+                    dimensions = vector.dimensions,
+                    vector = vector.values.toByteArrayVector(),
+                    contentHash = contentHash,
+                    createdAt = createdAt,
+                ),
+            )
         }
-        vector[bucket] += sign * weight
     }
-    normalizeInPlace(vector)
-    return vector
-}
 
-private fun tokenizeForEmbedding(text: String): List<String> {
-    val stop = setOf(
-        "the", "and", "for", "with", "that", "this", "from", "into", "your", "you", "are", "was", "were",
-        "have", "has", "had", "not", "but", "about", "what", "when", "where", "how", "why", "can", "will",
-    )
-    return text
-        .lowercase(Locale.US)
-        .split(Regex("[^a-z0-9]+"))
-        .filter { it.length >= 3 && it !in stop }
-        .flatMap { token ->
-            buildList {
-                add(token)
-                simpleStem(token)?.let(::add)
+    override suspend fun search(vector: EmbeddingVector, limit: Int, filter: Map<String, String>): List<VectorHit> {
+        val embeddingType = filter["embeddingType"] ?: "text"
+        val candidates = dao.candidates(embeddingType, scanLimit)
+        return candidates
+            .mapNotNull { candidate ->
+                val score = cosineSimilarity(vector.values, candidate.vector.toFloatVector(candidate.dimensions))
+                if (score < 0.08f) return@mapNotNull null
+                VectorHit(
+                    id = candidate.chunkId,
+                    score = score,
+                    provider = vector.provider,
+                    model = vector.model,
+                    diagnostics = mapOf(
+                        "index" to "room_exact_scan",
+                        "window" to scanLimit.toString(),
+                        "scanned" to candidates.size.toString(),
+                    ),
+                )
             }
-        }
-}
-
-private fun simpleStem(token: String): String? {
-    return when {
-        token.endsWith("ing") && token.length > 6 -> token.dropLast(3)
-        token.endsWith("ed") && token.length > 5 -> token.dropLast(2)
-        token.endsWith("s") && token.length > 4 -> token.dropLast(1)
-        else -> null
-    }?.takeIf { it.length >= 3 && it != token }
-}
-
-private fun normalizeInPlace(vector: FloatArray) {
-    var sum = 0f
-    vector.forEach { sum += it * it }
-    val norm = sqrt(sum)
-    if (norm <= 0f) return
-    for (index in vector.indices) {
-        vector[index] = vector[index] / norm
+            .sortedByDescending { it.score }
+            .take(limit)
     }
 }
 

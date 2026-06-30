@@ -657,6 +657,24 @@ interface ChunkEmbeddingDao {
         """,
     )
     suspend fun candidates(embeddingType: String, limit: Int): List<ChunkEmbeddingCandidate>
+
+    @Query(
+        """
+        SELECT sources.id AS sourceId, document_chunks.id AS chunkId, sources.title AS title,
+               sources.sourceType AS sourceType, sources.originDomain AS originDomain,
+               sources.author AS author, sources.durationSeconds AS durationSeconds,
+               document_chunks.text AS body,
+               document_chunks.chunkType AS chunkType, document_chunks.language AS language,
+               document_chunks.startTimeMs AS startTimeMs,
+               document_chunks.endTimeMs AS endTimeMs, sources.savedAt AS savedAt,
+               chunk_embeddings.dimensions AS dimensions, chunk_embeddings.vector AS vector
+        FROM chunk_embeddings
+        INNER JOIN document_chunks ON document_chunks.id = chunk_embeddings.chunkId
+        INNER JOIN sources ON sources.id = chunk_embeddings.sourceId
+        WHERE chunk_embeddings.embeddingType = :embeddingType AND chunk_embeddings.chunkId IN (:chunkIds)
+        """,
+    )
+    suspend fun candidatesByChunkIds(embeddingType: String, chunkIds: List<String>): List<ChunkEmbeddingCandidate>
 }
 
 @Dao

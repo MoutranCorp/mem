@@ -14,8 +14,8 @@ android {
         applicationId "com.moutrancorp.memspike"
         minSdk 24
         targetSdk 35
-        versionCode 49
-        versionName "0.3.45-rag-context-tools"
+        versionCode 50
+        versionName "0.3.46-rag-vector-index"
 
         ndk {
             abiFilters "arm64-v8a"

@@ -317,10 +317,12 @@ Exit criteria:
    health: source count, chunk depth, FTS rows, transcript/visual/timestamped
    chunks, caption tracks, embedding coverage, visual observations, search
    logs, and agent action counts. The local exact-scan semantic fallback now
-   has an explicit 10k embedding scan window with scanned/window diagnostics in
-   rank signals and health warnings when the library outgrows that fallback. A
-   production local/cloud embedding provider and approximate vector index
-   remain.
+   has an explicit 10k embedding scan window with provider/model/index/scanned
+   diagnostics in rank signals and health warnings when the library outgrows
+   that fallback. Semantic search and chunk indexing now route through
+   `EmbeddingProvider` and `VectorIndex` implementations instead of direct
+   repository calls. A production local/cloud embedding provider and approximate
+   vector index remain.
 6. Implement the first agent tool set: search memory, get source/chunks, and
    draft collection/playlist actions with preview/undo. Started with
    search-generated collection drafts backed by `agent_actions`, preview,
