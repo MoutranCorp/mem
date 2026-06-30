@@ -52,6 +52,8 @@ model used by `mobile-agent`.
   the library.
 - Auth-gated links are saved as first-class `needs_auth` sources with a clear
   detail callout and retry-public-extraction action.
+- `needs_auth` source detail can import a domain-scoped `cookies.txt` file,
+  store it as an auth session, and retry `yt-dlp` with that cookie file.
 
 The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and
@@ -78,9 +80,10 @@ C:\src\androidsdk\platform-tools\adb.exe install -r app\build\outputs\apk\debug\
 
 Some sources, especially Instagram Reels, often require a logged-in browser
 session. In that case yt-dlp will return an auth/cookies error even if YouTube
-works. The Play-safe version should not scrape browser cookies silently; the
-next auth spike should evaluate explicit user-imported cookies or a source-level
-login flow.
+works. The Play-safe version does not scrape browser cookies silently. It can
+import an explicit user-selected `cookies.txt` for a supported domain and pass
+that file to packaged `yt-dlp`; a smoother WebView connection flow should build
+on the same auth session store.
 
 ## Next Work
 
@@ -99,13 +102,14 @@ Immediate next steps:
 3. Expand source detail into full video/article/document layouts.
 4. Build collection detail screens and richer tag editing.
 5. Expand FTS indexing to transcript/caption chunks and richer ranking.
-6. Add OCR for scanned/image-only PDFs and imported images.
-7. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
+6. Add WebView-based Instagram connection on top of the auth session store.
+7. Add OCR for scanned/image-only PDFs and imported images.
+8. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
    libs and pass their paths to `yt-dlp` through `ffmpeg_location`.
-8. Move long downloads to user-initiated data transfer jobs and media processing
+9. Move long downloads to user-initiated data transfer jobs and media processing
    work to a foreground service with the `mediaProcessing` type.
-9. Add transcript/caption fetching behind an explicit rights confirmation.
-10. Add an embedding/index interface so every extracted record becomes a RAG
+10. Add transcript/caption fetching behind an explicit rights confirmation.
+11. Add an embedding/index interface so every extracted record becomes a RAG
    document with stable IDs, source URL, timestamp, title, tags, and transcript
    segments.
 

@@ -17,7 +17,7 @@ READABLE_TAGS = {"article", "main", "section", "p", "h1", "h2", "h3", "li", "blo
 SKIP_TEXT_TAGS = {"script", "style", "noscript", "svg", "nav", "footer", "form", "button"}
 
 
-def extract(url, files_dir, ffmpeg_path=""):
+def extract(url, files_dir, ffmpeg_path="", cookie_file_path=""):
     started = time.time()
     cache_dir = os.path.join(files_dir or "", "yt_dlp_cache")
     os.makedirs(cache_dir, exist_ok=True)
@@ -34,6 +34,8 @@ def extract(url, files_dir, ffmpeg_path=""):
     }
     if ffmpeg_path:
         options["ffmpeg_location"] = ffmpeg_path
+    if cookie_file_path:
+        options["cookiefile"] = cookie_file_path
 
     try:
         with yt_dlp.YoutubeDL(options) as ydl:
@@ -44,6 +46,7 @@ def extract(url, files_dir, ffmpeg_path=""):
             "ytDlpVersion": yt_dlp.version.__version__,
             "durationMs": int((time.time() - started) * 1000),
             "ffmpegDetected": bool(ffmpeg_path),
+            "cookieFileDetected": bool(cookie_file_path),
             "ragCandidate": summarize(info),
         }
     except Exception as exc:

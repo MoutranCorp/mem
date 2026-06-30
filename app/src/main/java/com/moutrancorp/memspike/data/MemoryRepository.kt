@@ -240,6 +240,29 @@ class MemoryRepository(private val database: MemDatabase) {
         indexSource(source, null)
     }
 
+    suspend fun authSessionForInput(input: String): AuthSessionEntity? {
+        val domain = authDomain(input) ?: return null
+        return database.authSessionDao().findByDomain(domain)?.takeIf { it.status == "connected" }
+    }
+
+    suspend fun saveAuthSession(provider: String, domain: String, cookieFilePath: String): AuthSessionEntity {
+        val now = System.currentTimeMillis()
+        val existing = database.authSessionDao().findByDomain(domain)
+        val session = AuthSessionEntity(
+            id = existing?.id ?: stableId("auth:$domain"),
+            provider = provider,
+            domain = domain,
+            status = "connected",
+            cookieFilePath = cookieFilePath,
+            createdAt = existing?.createdAt ?: now,
+            updatedAt = now,
+            lastValidatedAt = null,
+            lastError = null,
+        )
+        database.authSessionDao().upsert(session)
+        return session
+    }
+
     private suspend fun indexSource(source: SourceEntity, extractedText: String?) {
         val durableTags = database.tagDao().tagsForSource(source.id).map { it.name }
         val tags = (listOf(source.processingState, source.sourceType, source.authState, source.originDomain) + durableTags)
@@ -325,6 +348,15 @@ fun canonicalize(input: String): String {
 
 fun originDomain(input: String): String? {
     return runCatching { URI(input.trim()).host?.removePrefix("www.") }.getOrNull()
+}
+
+fun authDomain(input: String): String? {
+    val host = originDomain(input)?.lowercase(Locale.US) ?: return null
+    return when {
+        host == "instagram.com" || host.endsWith(".instagram.com") -> "instagram.com"
+        host == "youtube.com" || host.endsWith(".youtube.com") || host == "youtu.be" -> "youtube.com"
+        else -> host
+    }
 }
 
 private fun stableSourceId(canonicalUrl: String): String {

@@ -117,6 +117,9 @@ Image import now works from the Capture file picker and Android share sheet,
 copying images into app-private storage and rendering them locally in Library.
 Auth-gated extractor failures now emit structured `needs_auth` candidates,
 persist as first-class sources, and show a focused auth callout with retry.
+Auth-gated source detail can now import an explicit domain-scoped `cookies.txt`,
+store it in an `auth_sessions` record, and retry extraction with `yt-dlp`
+`cookiefile`.
 
 Deliverables:
 
@@ -128,7 +131,8 @@ Deliverables:
   PDF text extraction.
 - Image import plus OCR spike. Started with local image import; OCR remains.
 - Voice note plus transcription spike.
-- Auth-gated source result type. Started with structured `needs_auth` results.
+- Auth-gated source result type. Started with structured `needs_auth` results
+  and explicit cookie-file auth sessions.
 
 Exit criteria:
 

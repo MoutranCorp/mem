@@ -14,8 +14,8 @@ android {
         applicationId "com.moutrancorp.memspike"
         minSdk 24
         targetSdk 35
-        versionCode 18
-        versionName "0.3.14-auth-gated-sources"
+        versionCode 19
+        versionName "0.3.15-cookie-auth-import"
 
         ndk {
             abiFilters "arm64-v8a"

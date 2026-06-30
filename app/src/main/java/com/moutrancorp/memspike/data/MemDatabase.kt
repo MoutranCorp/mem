@@ -213,6 +213,26 @@ data class CollectionSourceEntity(
     val addedAt: Long,
 )
 
+@Entity(
+    tableName = "auth_sessions",
+    indices = [
+        Index(value = ["domain"], unique = true),
+        Index(value = ["provider"]),
+        Index(value = ["status"]),
+    ],
+)
+data class AuthSessionEntity(
+    @PrimaryKey val id: String,
+    val provider: String,
+    val domain: String,
+    val status: String,
+    val cookieFilePath: String,
+    val createdAt: Long,
+    val updatedAt: Long,
+    val lastValidatedAt: Long?,
+    val lastError: String?,
+)
+
 data class CollectionSummary(
     val id: String,
     val title: String,
@@ -329,6 +349,15 @@ interface CollectionDao {
     suspend fun insertCollectionSource(collectionSource: CollectionSourceEntity)
 }
 
+@Dao
+interface AuthSessionDao {
+    @Query("SELECT * FROM auth_sessions WHERE domain = :domain LIMIT 1")
+    suspend fun findByDomain(domain: String): AuthSessionEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(session: AuthSessionEntity)
+}
+
 @Database(
     entities = [
         SourceEntity::class,
@@ -340,8 +369,9 @@ interface CollectionDao {
         SourceTagEntity::class,
         CollectionEntity::class,
         CollectionSourceEntity::class,
+        AuthSessionEntity::class,
     ],
-    version = 4,
+    version = 5,
     exportSchema = true,
 )
 abstract class MemDatabase : RoomDatabase() {
@@ -352,6 +382,7 @@ abstract class MemDatabase : RoomDatabase() {
     abstract fun sourceSearchDao(): SourceSearchDao
     abstract fun tagDao(): TagDao
     abstract fun collectionDao(): CollectionDao
+    abstract fun authSessionDao(): AuthSessionDao
 
     companion object {
         @Volatile private var instance: MemDatabase? = null
@@ -389,6 +420,34 @@ abstract class MemDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 createAssetTables(db)
             }
+        }
+
+        private val migration4To5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                createAuthSessionTables(db)
+            }
+        }
+
+        private fun createAuthSessionTables(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `auth_sessions` (
+                    `id` TEXT NOT NULL,
+                    `provider` TEXT NOT NULL,
+                    `domain` TEXT NOT NULL,
+                    `status` TEXT NOT NULL,
+                    `cookieFilePath` TEXT NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    `updatedAt` INTEGER NOT NULL,
+                    `lastValidatedAt` INTEGER,
+                    `lastError` TEXT,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_auth_sessions_domain` ON `auth_sessions` (`domain`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_auth_sessions_provider` ON `auth_sessions` (`provider`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_auth_sessions_status` ON `auth_sessions` (`status`)")
         }
 
         private fun createAssetTables(db: SupportSQLiteDatabase) {
@@ -489,7 +548,7 @@ abstract class MemDatabase : RoomDatabase() {
                     MemDatabase::class.java,
                     "mem.db",
                 )
-                    .addMigrations(migration1To2, migration2To3, migration3To4)
+                    .addMigrations(migration1To2, migration2To3, migration3To4, migration4To5)
                     .build()
                     .also { instance = it }
             }

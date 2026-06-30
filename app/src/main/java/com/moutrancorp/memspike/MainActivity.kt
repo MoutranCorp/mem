@@ -137,6 +137,7 @@ import com.moutrancorp.memspike.data.MemDatabase
 import com.moutrancorp.memspike.data.MemoryRepository
 import com.moutrancorp.memspike.data.MemoryState
 import com.moutrancorp.memspike.data.SourceEntity
+import com.moutrancorp.memspike.data.authDomain
 import com.moutrancorp.memspike.data.canonicalize
 import com.moutrancorp.memspike.data.originDomain
 import kotlinx.coroutines.CoroutineScope
@@ -375,7 +376,8 @@ private class MemAppState(
         scope.launch {
             val queued = repository.createQueuedSource(urlCandidate)
             repository.markExtracting(queued.sourceId, queued.jobId)
-            val result = extractor.extract(urlCandidate)
+            val authSession = repository.authSessionForInput(urlCandidate)
+            val result = extractor.extract(urlCandidate, authSession?.cookieFilePath)
             repository.completeExtraction(
                 sourceId = queued.sourceId,
                 jobId = queued.jobId,
@@ -527,6 +529,37 @@ private class MemAppState(
         extract(input)
     }
 
+    fun importCookiesForMemory(memory: MemoryUi, uri: Uri) {
+        val input = memory.openUrl
+        val domain = input?.let(::authDomain)
+        if (input.isNullOrBlank() || domain == null) {
+            logOutput = "No supported auth domain is available for ${memory.title}."
+            return
+        }
+        isExtracting = true
+        selectedMemory = null
+        selectedTab = MainTab.Capture
+        captureText = input
+        showCapture = true
+        logOutput = "Importing cookies for $domain..."
+        scope.launch {
+            val cookieFile = withContext(Dispatchers.IO) { context.copyCookieFile(domain, uri) }
+            if (cookieFile == null) {
+                isExtracting = false
+                logOutput = "Could not import this cookies file."
+                return@launch
+            }
+            repository.saveAuthSession(
+                provider = if (domain == "instagram.com") "instagram" else domain,
+                domain = domain,
+                cookieFilePath = cookieFile.absolutePath,
+            )
+            isExtracting = false
+            logOutput = "Imported cookies for $domain. Retrying extraction..."
+            extract(input)
+        }
+    }
+
     fun openMemory(memory: MemoryUi) {
         if (memory.localPlaybackPath != null) {
             logOutput = "In-app playback is reserved for downloaded media. Local player UI comes with the offline-save slice."
@@ -585,7 +618,7 @@ private class MemAppState(
 }
 
 private class YtDlpExtractor(private val activity: Activity) {
-    suspend fun extract(url: String): ExtractionResult = withContext(Dispatchers.IO) {
+    suspend fun extract(url: String, cookieFilePath: String? = null): ExtractionResult = withContext(Dispatchers.IO) {
         try {
             if (!Python.isStarted()) {
                 Python.start(AndroidPlatform(activity))
@@ -598,6 +631,7 @@ private class YtDlpExtractor(private val activity: Activity) {
                 url,
                 activity.filesDir.absolutePath,
                 ffmpegPath,
+                cookieFilePath.orEmpty(),
             )
             ExtractionResult.fromJson(raw.toString())
         } catch (t: Throwable) {
@@ -914,6 +948,17 @@ private fun Context.copySharedImageFile(uri: Uri): ImportedImageFile? {
         file = target,
         stableInput = stableInput,
     )
+}
+
+private fun Context.copyCookieFile(domain: String, uri: Uri): File? {
+    val raw = contentResolver.openInputStream(uri)?.bufferedReader()?.use { reader ->
+        reader.readText()
+    } ?: return null
+    if (!raw.contains(domain, ignoreCase = true) || !raw.contains("\t")) return null
+    val authDir = File(filesDir, "auth/$domain").apply { mkdirs() }
+    val target = File(authDir, "cookies.txt")
+    target.writeText(raw)
+    return target
 }
 
 private fun Context.copySharedPdfFile(uri: Uri): ImportedPdfFile? {
@@ -1455,6 +1500,7 @@ private fun MemScaffold(state: MemAppState) {
                 onDismiss = state::closeSourceDetail,
                 onOpenMemory = state::openMemory,
                 onRetryExtraction = state::retryMemoryExtraction,
+                onImportCookies = state::importCookiesForMemory,
                 onAddToPlaylist = state::addToPlaylist,
                 onTagForReview = state::tagForReview,
             )
@@ -1965,6 +2011,7 @@ private fun SourceDetailSheet(
     onDismiss: () -> Unit,
     onOpenMemory: (MemoryUi) -> Unit,
     onRetryExtraction: (MemoryUi) -> Unit,
+    onImportCookies: (MemoryUi, Uri) -> Unit,
     onAddToPlaylist: (MemoryUi) -> Unit,
     onTagForReview: (MemoryUi) -> Unit,
 ) {
@@ -2017,7 +2064,11 @@ private fun SourceDetailSheet(
         }
 
         if (memory.needsAuth) {
-            AuthRequiredPanel(memory = memory, onRetry = { onRetryExtraction(memory) })
+            AuthRequiredPanel(
+                memory = memory,
+                onRetry = { onRetryExtraction(memory) },
+                onImportCookies = { uri -> onImportCookies(memory, uri) },
+            )
         }
 
         SurfaceCard {
@@ -2112,7 +2163,10 @@ private fun SourceDetailSheet(
 }
 
 @Composable
-private fun AuthRequiredPanel(memory: MemoryUi, onRetry: () -> Unit) {
+private fun AuthRequiredPanel(memory: MemoryUi, onRetry: () -> Unit, onImportCookies: (Uri) -> Unit) {
+    val cookiePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) onImportCookies(uri)
+    }
     SurfaceCard(
         container = MemTokens.colors.warning.copy(alpha = 0.10f),
         border = BorderStroke(1.dp, MemTokens.colors.warning.copy(alpha = 0.28f)),
@@ -2128,6 +2182,15 @@ private fun AuthRequiredPanel(memory: MemoryUi, onRetry: () -> Unit) {
             }
             SelectionContainer {
                 Text(memory.summary, color = MemTokens.colors.textSecondary, fontSize = 13.sp, lineHeight = 19.sp)
+            }
+            OutlinedButton(
+                onClick = { cookiePicker.launch(arrayOf("text/plain", "text/*", "application/octet-stream")) },
+                modifier = Modifier.fillMaxWidth(),
+                shape = MemTokens.shapes.pill,
+            ) {
+                Icon(Icons.Rounded.UploadFile, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
+                Text("Import cookies.txt")
             }
             OutlinedButton(
                 onClick = onRetry,
