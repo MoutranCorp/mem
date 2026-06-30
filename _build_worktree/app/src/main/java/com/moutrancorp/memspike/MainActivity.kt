@@ -402,7 +402,11 @@ private class MemAppState(
                     val citedSources = mappedResults
                         .map { it.sourceId }
                         .distinct()
-                        .mapNotNull { repository.sourceSnapshot(it)?.toMemoryUi() }
+                        .mapNotNull { sourceId ->
+                            memories.firstOrNull { it.id == sourceId }
+                                ?: repository.sourceSnapshot(sourceId)?.toMemoryUi()
+                        }
+                        .map { it.withoutInlinePlayback() }
                     searchMemories.addAll(citedSources)
                 }
             }
@@ -802,10 +806,11 @@ private class MemAppState(
     }
 
     private fun openSourceDetail(memory: MemoryUi, startTimeMs: Long?) {
-        openSourceDetail(memory)
+        val canonicalMemory = memories.firstOrNull { it.id == memory.id } ?: memory
+        openSourceDetail(canonicalMemory)
         selectedMemoryStartMs = startTimeMs
         if (startTimeMs != null) {
-            logOutput = "Opened ${memory.title} at ${startTimeMs.timestampLabel()}."
+            logOutput = "Opened ${canonicalMemory.title} at ${startTimeMs.timestampLabel()}."
         }
     }
 
@@ -1772,6 +1777,8 @@ private data class MemoryUi(
 ) {
     val needsAuth: Boolean
         get() = authState == "needs_auth" || processingState == "needs_auth"
+
+    fun withoutInlinePlayback(): MemoryUi = copy(localPlaybackPath = null)
 }
 
 private data class CollectionUi(
