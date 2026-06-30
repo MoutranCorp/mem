@@ -32,7 +32,16 @@ private const val SEARCH_RESULT_LIMIT = 40
 
 class MemoryRepository(private val database: MemDatabase) {
     fun availableMemoryTools(): List<String> {
-        return listOf("search_memory", "get_source_context", "summarize_source", "draft_collection", "tag_sources")
+        return listOf(
+            "search_memory",
+            "get_source_context",
+            "get_transcript",
+            "get_visual_observations",
+            "explain_result",
+            "summarize_source",
+            "draft_collection",
+            "tag_sources",
+        )
     }
 
     suspend fun runMemoryTool(call: AgentToolCall): AgentToolResult {
@@ -40,6 +49,9 @@ class MemoryRepository(private val database: MemDatabase) {
         val result = when (call.name) {
             "search_memory" -> runSearchMemoryTool(args)
             "get_source_context" -> runGetSourceContextTool(args)
+            "get_transcript" -> runGetTranscriptTool(args)
+            "get_visual_observations" -> runGetVisualObservationsTool(args)
+            "explain_result" -> runExplainResultTool(args)
             "summarize_source" -> runSummarizeSourceTool(args)
             "draft_collection" -> runDraftCollectionTool(args)
             "tag_sources" -> runTagSourcesTool(args)
@@ -236,19 +248,20 @@ class MemoryRepository(private val database: MemDatabase) {
 
     suspend fun chunksForSource(sourceId: String, limit: Int = 80): List<ContentChunkData> {
         return database.documentChunkDao().findBySource(sourceId, limit).map { chunk ->
-            ContentChunkData(
-                id = chunk.id,
-                sourceId = chunk.sourceId,
-                text = chunk.text,
-                chunkType = chunk.chunkType,
-                language = chunk.language,
-                startTimeMs = chunk.startTimeMs,
-                endTimeMs = chunk.endTimeMs,
-                page = chunk.page,
-                sectionTitle = chunk.sectionTitle,
-                provider = chunk.provider,
-            )
+            chunk.toContentChunkData()
         }
+    }
+
+    private suspend fun transcriptChunksForSource(sourceId: String, limit: Int = 120): List<ContentChunkData> {
+        return database.documentChunkDao()
+            .findBySourceAndTypes(sourceId, listOf("transcript", "transcript_segment"), limit)
+            .map { it.toContentChunkData() }
+    }
+
+    private suspend fun visualChunksForSource(sourceId: String, limit: Int = 80): List<ContentChunkData> {
+        return database.documentChunkDao()
+            .findBySourceAndTypes(sourceId, listOf("visual"), limit)
+            .map { it.toContentChunkData() }
     }
 
     suspend fun sourceSnapshot(sourceId: String): SourceSnapshot? {
@@ -643,6 +656,86 @@ class MemoryRepository(private val database: MemDatabase) {
             .put("tool", "get_source_context")
             .put("source", snapshot.toToolSourceJson())
             .put("chunks", JSONArray(chunks.map { it.toToolChunkJson() }))
+    }
+
+    private suspend fun runGetTranscriptTool(args: JSONObject): JSONObject {
+        val sourceId = args.optString("sourceId").trim()
+        val limit = args.optInt("limit", 40).coerceIn(1, 160)
+        val snapshot = sourceSnapshot(sourceId) ?: return JSONObject()
+            .put("ok", false)
+            .put("error", "source not found")
+        val tracks = database.captionTrackDao().findBySource(sourceId)
+        val chunks = transcriptChunksForSource(sourceId, limit)
+        return JSONObject()
+            .put("ok", true)
+            .put("tool", "get_transcript")
+            .put("source", snapshot.toToolSourceJson())
+            .put("hasTranscript", chunks.isNotEmpty())
+            .put("captionTracks", JSONArray(tracks.map { it.toToolCaptionTrackJson() }))
+            .put("segments", JSONArray(chunks.map { it.toToolChunkJson(textLimit = 1_200) }))
+            .put(
+                "coverageNote",
+                if (chunks.isEmpty()) {
+                    "No transcript chunks are indexed for this source yet; answers should treat it as metadata-only unless other chunks are available."
+                } else {
+                    "Transcript chunks are timestamped where the source provided timing; cite chunkId and startTimeMs when answering."
+                },
+            )
+    }
+
+    private suspend fun runGetVisualObservationsTool(args: JSONObject): JSONObject {
+        val sourceId = args.optString("sourceId").trim()
+        val limit = args.optInt("limit", 40).coerceIn(1, 120)
+        val snapshot = sourceSnapshot(sourceId) ?: return JSONObject()
+            .put("ok", false)
+            .put("error", "source not found")
+        val observations = database.visualObservationDao().findBySource(sourceId).take(limit)
+        val chunks = visualChunksForSource(sourceId, limit)
+        return JSONObject()
+            .put("ok", true)
+            .put("tool", "get_visual_observations")
+            .put("source", snapshot.toToolSourceJson())
+            .put("hasVisualObservations", observations.isNotEmpty() || chunks.isNotEmpty())
+            .put("observations", JSONArray(observations.map { it.toToolVisualObservationJson() }))
+            .put("chunks", JSONArray(chunks.map { it.toToolChunkJson(textLimit = 1_000) }))
+            .put(
+                "coverageNote",
+                if (observations.isEmpty() && chunks.isEmpty()) {
+                    "No visual observations are indexed for this source yet; visual-event answers should say the source has not been visually analyzed."
+                } else {
+                    "Current local observations may be frame-sample placeholders unless provider/model identify a vision analyzer; cite timestamps and avoid claiming unseen events."
+                },
+            )
+    }
+
+    private suspend fun runExplainResultTool(args: JSONObject): JSONObject {
+        val query = args.optString("query").trim()
+        val sourceId = args.optString("sourceId").trim()
+        val chunkId = args.optString("chunkId").trim()
+        if (query.isBlank() || sourceId.isBlank()) {
+            return JSONObject()
+                .put("ok", false)
+                .put("error", "query and sourceId are required")
+        }
+        val results = searchMemory(query)
+        val result = results.firstOrNull { it.sourceId == sourceId && (chunkId.isBlank() || it.chunkId == chunkId) }
+            ?: return JSONObject()
+                .put("ok", false)
+                .put("error", "result not found for query")
+                .put("query", query)
+                .put("sourceId", sourceId)
+                .put("chunkId", chunkId)
+        val chunk = database.documentChunkDao().findById(result.chunkId)?.toContentChunkData()
+        return JSONObject()
+            .put("ok", true)
+            .put("tool", "explain_result")
+            .put("query", query)
+            .put("citation", result.toToolCitationJson())
+            .put("rankSignals", result.rankSignals)
+            .put("retrievalMode", result.retrievalMode)
+            .put("matchReason", result.matchReason)
+            .put("explanation", explainSearchResult(result, query))
+            .put("chunk", chunk?.toToolChunkJson(textLimit = 1_200))
     }
 
     private suspend fun runSummarizeSourceTool(args: JSONObject): JSONObject {
@@ -1350,7 +1443,7 @@ private fun SourceSnapshot.toToolSourceJson(): JSONObject {
         .put("assetRoles", JSONArray(assets.map { it.role }))
 }
 
-private fun ContentChunkData.toToolChunkJson(): JSONObject {
+private fun ContentChunkData.toToolChunkJson(textLimit: Int = 900): JSONObject {
     return JSONObject()
         .put("chunkId", id)
         .put("sourceId", sourceId)
@@ -1361,7 +1454,73 @@ private fun ContentChunkData.toToolChunkJson(): JSONObject {
         .put("page", page)
         .put("sectionTitle", sectionTitle)
         .put("provider", provider)
-        .put("text", text.take(900))
+        .put("text", text.take(textLimit))
+}
+
+private fun CaptionTrackEntity.toToolCaptionTrackJson(): JSONObject {
+    return JSONObject()
+        .put("captionTrackId", id)
+        .put("sourceId", sourceId)
+        .put("language", language)
+        .put("source", source)
+        .put("format", format)
+        .put("segmentCount", segmentCount)
+        .put("chunkCount", chunkCount)
+        .put("createdAt", createdAt)
+}
+
+private fun VisualObservationEntity.toToolVisualObservationJson(): JSONObject {
+    return JSONObject()
+        .put("observationId", id)
+        .put("sourceId", sourceId)
+        .put("assetId", assetId)
+        .put("observationType", observationType)
+        .put("text", text.take(1_000))
+        .put("confidence", confidence)
+        .put("provider", provider)
+        .put("model", model)
+        .put("startTimeMs", startTimeMs)
+        .put("endTimeMs", endTimeMs)
+        .put("createdAt", createdAt)
+}
+
+private fun DocumentChunkEntity.toContentChunkData(): ContentChunkData {
+    return ContentChunkData(
+        id = id,
+        sourceId = sourceId,
+        text = text,
+        chunkType = chunkType,
+        language = language,
+        startTimeMs = startTimeMs,
+        endTimeMs = endTimeMs,
+        page = page,
+        sectionTitle = sectionTitle,
+        provider = provider,
+    )
+}
+
+private fun explainSearchResult(result: SearchResultData, query: String): String {
+    val timestamp = result.startTimeMs?.let { " at ${it.timestampLabel()}" }.orEmpty()
+    val sourceLabel = listOfNotNull(result.sourceType, result.originDomain).joinToString(" from ")
+    val retrieval = when (result.retrievalMode) {
+        "hybrid" -> "both keyword and semantic retrieval"
+        "keyword" -> "keyword retrieval"
+        "semantic" -> "semantic retrieval"
+        "filter" -> "structured filter retrieval"
+        else -> result.retrievalMode
+    }
+    return buildString {
+        append("Mem matched ")
+        append(result.title)
+        if (sourceLabel.isNotBlank()) append(" ($sourceLabel)")
+        append(" for \"$query\" using $retrieval.")
+        append(" The cited ${result.chunkType} chunk$timestamp was selected because: ${result.matchReason}.")
+        append(" Rank signals: ${result.rankSignals}.")
+        if (result.snippet.isNotBlank()) {
+            append(" Evidence snippet: ")
+            append(result.snippet.take(260))
+        }
+    }
 }
 
 private fun deterministicSourceSummary(snapshot: SourceSnapshot, chunks: List<ContentChunkData>): String {

@@ -154,6 +154,68 @@
       "text": "This paragraph contains an exact phrase that should still match when a different ignored token is excluded."
     }
   ],
+  "captionTracks": [
+    {
+      "id": "caption_yt_founder_distribution_en",
+      "sourceId": "yt_founder_distribution",
+      "language": "en",
+      "source": "youtube_subtitle",
+      "format": "vtt",
+      "segmentCount": 18,
+      "chunkCount": 1
+    },
+    {
+      "id": "caption_yt_japan_food_short_en",
+      "sourceId": "yt_japan_food_short",
+      "language": "en",
+      "source": "youtube_subtitle",
+      "format": "vtt",
+      "segmentCount": 12,
+      "chunkCount": 1
+    }
+  ],
+  "visualObservations": [
+    {
+      "id": "visual_local_gameplay_sample_1",
+      "sourceId": "local_gameplay_visual",
+      "assetId": "asset_local_gameplay_playback",
+      "observationType": "frame_sample",
+      "provider": "local",
+      "model": "frame-sample-placeholders",
+      "startTimeMs": 1000,
+      "text": "Visual frame sample 1 for Imported Gameplay Clip at 0:01. Placeholder observation without detected-event claims."
+    }
+  ],
+  "toolContracts": [
+    {
+      "name": "Transcript tool returns timestamped caption segments",
+      "tool": "get_transcript",
+      "sourceId": "yt_founder_distribution",
+      "requiresTranscript": true,
+      "minCounts": { "segments": 1, "captionTracks": 1 },
+      "requiredChunkType": "transcript",
+      "requiresTimestamp": true,
+      "requiresText": "distribution matters"
+    },
+    {
+      "name": "Visual tool returns cautious observation payload",
+      "tool": "get_visual_observations",
+      "sourceId": "local_gameplay_visual",
+      "requiresVisualObservations": true,
+      "minCounts": { "chunks": 1, "observations": 1 },
+      "requiredChunkType": "visual",
+      "requiresTimestamp": true,
+      "requiresText": "without detected-event claims"
+    },
+    {
+      "name": "Explain result includes rank signals",
+      "tool": "explain_result",
+      "query": "type:video has:transcript distribution",
+      "sourceId": "yt_founder_distribution",
+      "requiresRankSignals": true,
+      "requiresText": "yt_founder_distribution"
+    }
+  ],
   "queries": [
     {
       "name": "Transcript-only exact phrase",

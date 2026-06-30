@@ -325,10 +325,11 @@ Exit criteria:
    draft collection/playlist actions with preview/undo. Started with
    search-generated collection drafts backed by `agent_actions`, preview,
    apply, and undo. The repository now exposes reusable `search_memory`,
-   `get_source_context`, `summarize_source`, and `draft_collection` tools
-   through the same structured tool-call interface intended for a model-backed
-   agent runtime. Tagging is now part of the same auditable mutation flow
-   through `tag_sources`, with approval preview, apply, and undo.
+   `get_source_context`, `get_transcript`, `get_visual_observations`,
+   `explain_result`, `summarize_source`, and `draft_collection` tools through
+   the same structured tool-call interface intended for a model-backed agent
+   runtime. Tagging is now part of the same auditable mutation flow through
+   `tag_sources`, with approval preview, apply, and undo.
 7. Add visual observations for local/authorized videos so Mem can answer visual
    event queries that transcripts cannot cover. Started with local frame-sample
    observations for playable videos, indexed as `visual` chunks. A real

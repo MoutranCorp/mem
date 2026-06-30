@@ -542,9 +542,13 @@ def add_result(results: dict[str, Result], parsed: ParsedQuery, result: Result, 
         existing.rank_signals += "; hybrid=true"
 
 
-def load_fixture(path: Path) -> tuple[list[Chunk], list[dict[str, Any]]]:
+def load_fixture(path: Path) -> tuple[list[Chunk], dict[str, dict[str, Any]], dict[str, list[dict[str, Any]]], list[dict[str, Any]], list[dict[str, Any]]]:
     data = json.loads(path.read_text(encoding="utf-8"))
     sources = {source["id"]: source for source in data["sources"]}
+    auxiliary = {
+        "captionTracks": data.get("captionTracks", []),
+        "visualObservations": data.get("visualObservations", []),
+    }
     chunks: list[Chunk] = []
     for raw in data["chunks"]:
         source = sources[raw["sourceId"]]
@@ -567,7 +571,7 @@ def load_fixture(path: Path) -> tuple[list[Chunk], list[dict[str, Any]]]:
                 start_time_ms=raw.get("startTimeMs"),
             ),
         )
-    return chunks, data["queries"]
+    return chunks, sources, auxiliary, data["queries"], data.get("toolContracts", [])
 
 
 def parse_fixture_time(value: str) -> int:
@@ -619,14 +623,143 @@ def check_expectations(query: dict[str, Any], results: list[Result]) -> list[str
     return failures
 
 
+def tool_get_transcript(
+    source_id: str,
+    chunks: list[Chunk],
+    auxiliary: dict[str, list[dict[str, Any]]],
+    limit: int = 40,
+) -> dict[str, Any]:
+    segments = [
+        chunk
+        for chunk in chunks
+        if chunk.source_id == source_id and chunk.chunk_type in {"transcript", "transcript_segment"}
+    ][:limit]
+    tracks = [track for track in auxiliary["captionTracks"] if track["sourceId"] == source_id]
+    return {
+        "tool": "get_transcript",
+        "sourceId": source_id,
+        "hasTranscript": bool(segments),
+        "captionTracks": tracks,
+        "segments": [
+            {
+                "chunkId": chunk.id,
+                "chunkType": chunk.chunk_type,
+                "language": chunk.language,
+                "startTimeMs": chunk.start_time_ms,
+                "text": chunk.text,
+            }
+            for chunk in segments
+        ],
+    }
+
+
+def tool_get_visual_observations(
+    source_id: str,
+    chunks: list[Chunk],
+    auxiliary: dict[str, list[dict[str, Any]]],
+    limit: int = 40,
+) -> dict[str, Any]:
+    visual_chunks = [
+        chunk
+        for chunk in chunks
+        if chunk.source_id == source_id and chunk.chunk_type == "visual"
+    ][:limit]
+    observations = [item for item in auxiliary["visualObservations"] if item["sourceId"] == source_id][:limit]
+    return {
+        "tool": "get_visual_observations",
+        "sourceId": source_id,
+        "hasVisualObservations": bool(visual_chunks or observations),
+        "observations": observations,
+        "chunks": [
+            {
+                "chunkId": chunk.id,
+                "chunkType": chunk.chunk_type,
+                "startTimeMs": chunk.start_time_ms,
+                "text": chunk.text,
+            }
+            for chunk in visual_chunks
+        ],
+    }
+
+
+def tool_explain_result(query: str, source_id: str, chunks: list[Chunk]) -> dict[str, Any]:
+    results = search(chunks, query)
+    result = next((item for item in results if item.chunk.source_id == source_id), None)
+    if result is None:
+        return {"tool": "explain_result", "ok": False, "error": "result not found"}
+    return {
+        "tool": "explain_result",
+        "ok": True,
+        "query": query,
+        "citation": {
+            "sourceId": result.chunk.source_id,
+            "chunkId": result.chunk.id,
+            "chunkType": result.chunk.chunk_type,
+            "retrievalMode": result.retrieval_mode,
+            "rankSignals": result.rank_signals,
+        },
+        "explanation": (
+            f"Mem matched {result.chunk.source_title} for {query!r} using "
+            f"{result.retrieval_mode} retrieval. Rank signals: {result.rank_signals}."
+        ),
+    }
+
+
+def check_tool_contract(
+    contract: dict[str, Any],
+    chunks: list[Chunk],
+    auxiliary: dict[str, list[dict[str, Any]]],
+) -> list[str]:
+    tool = contract["tool"]
+    source_id = contract.get("sourceId", "")
+    if tool == "get_transcript":
+        payload = tool_get_transcript(source_id, chunks, auxiliary, contract.get("limit", 40))
+    elif tool == "get_visual_observations":
+        payload = tool_get_visual_observations(source_id, chunks, auxiliary, contract.get("limit", 40))
+    elif tool == "explain_result":
+        payload = tool_explain_result(contract["query"], source_id, chunks)
+    else:
+        return [f"unknown tool contract: {tool}"]
+
+    failures: list[str] = []
+    if contract.get("requiresOk", True) and payload.get("ok") is False:
+        failures.append(payload.get("error", "tool did not return ok"))
+    if contract.get("requiresTranscript") and not payload.get("hasTranscript"):
+        failures.append("expected transcript availability")
+    if contract.get("requiresVisualObservations") and not payload.get("hasVisualObservations"):
+        failures.append("expected visual observations")
+    for key, minimum in contract.get("minCounts", {}).items():
+        value = payload.get(key, [])
+        if not isinstance(value, list) or len(value) < minimum:
+            failures.append(f"expected at least {minimum} {key}, got {len(value) if isinstance(value, list) else 'non-list'}")
+    required_chunk_type = contract.get("requiredChunkType")
+    if required_chunk_type:
+        values = payload.get("segments", []) + payload.get("chunks", [])
+        if not any(item.get("chunkType") == required_chunk_type for item in values):
+            failures.append(f"missing required chunk type {required_chunk_type}")
+    if contract.get("requiresTimestamp"):
+        values = payload.get("segments", []) + payload.get("chunks", [])
+        if not any(item.get("startTimeMs") is not None for item in values):
+            failures.append("missing timestamped tool payload")
+    required_text = contract.get("requiresText")
+    if required_text:
+        haystack_text = json.dumps(payload).lower()
+        if required_text.lower() not in haystack_text:
+            failures.append(f"missing required text {required_text!r}")
+    if contract.get("requiresRankSignals") and "rankSignals" not in json.dumps(payload):
+        failures.append("missing rank signals in tool payload")
+    return failures
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixture", type=Path, default=Path("tools/search_rag_eval_fixture.json"))
     parser.add_argument("--json", action="store_true", help="Emit machine-readable results")
     args = parser.parse_args()
 
-    chunks, queries = load_fixture(args.fixture)
+    chunks, _, auxiliary, queries, tool_contracts = load_fixture(args.fixture)
     report = []
+    tool_report = []
     failed = False
     for query in queries:
         results = search(chunks, query["query"])
@@ -651,9 +784,20 @@ def main() -> int:
                 ],
             },
         )
+    for contract in tool_contracts:
+        failures = check_tool_contract(contract, chunks, auxiliary)
+        failed = failed or bool(failures)
+        tool_report.append(
+            {
+                "name": contract["name"],
+                "tool": contract["tool"],
+                "passed": not failures,
+                "failures": failures,
+            },
+        )
 
     if args.json:
-        print(json.dumps({"passed": not failed, "queries": report}, indent=2))
+        print(json.dumps({"passed": not failed, "queries": report, "toolContracts": tool_report}, indent=2))
     else:
         for item in report:
             state = "PASS" if item["passed"] else "FAIL"
@@ -664,6 +808,11 @@ def main() -> int:
                     f"{result['sourceId']} / {result['chunkId']} "
                     f"({result['chunkType']}, {result['retrievalMode']}, {result['score']})",
                 )
+            for failure in item["failures"]:
+                print(f"  - {failure}")
+        for item in tool_report:
+            state = "PASS" if item["passed"] else "FAIL"
+            print(f"{state} tool {item['name']}: {item['tool']}")
             for failure in item["failures"]:
                 print(f"  - {failure}")
     return 1 if failed else 0

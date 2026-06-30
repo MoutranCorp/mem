@@ -497,6 +497,12 @@ interface DocumentChunkDao {
     @Query("SELECT * FROM document_chunks WHERE sourceId = :sourceId AND chunkType = :chunkType")
     suspend fun findBySourceAndType(sourceId: String, chunkType: String): List<DocumentChunkEntity>
 
+    @Query("SELECT * FROM document_chunks WHERE sourceId = :sourceId AND chunkType IN (:chunkTypes) ORDER BY COALESCE(startTimeMs, startOffset, 0) LIMIT :limit")
+    suspend fun findBySourceAndTypes(sourceId: String, chunkTypes: List<String>, limit: Int = 200): List<DocumentChunkEntity>
+
+    @Query("SELECT * FROM document_chunks WHERE id = :chunkId LIMIT 1")
+    suspend fun findById(chunkId: String): DocumentChunkEntity?
+
     @Query("SELECT COUNT(*) FROM document_chunks")
     suspend fun countAll(): Int
 

@@ -163,7 +163,8 @@ Immediate next steps:
    and can draft a collection from the cited source set. Collection drafts now
    create auditable agent action records with preview, apply, and undo. The
    repository now exposes reusable memory tools for `search_memory`,
-   `get_source_context`, `summarize_source`, and `draft_collection` through the
+   `get_source_context`, `get_transcript`, `get_visual_observations`,
+   `explain_result`, `summarize_source`, and `draft_collection` through the
    same tool-call interface a model-backed runtime will use. Agent-driven tag
    actions are now approval-gated too through `tag_sources`, with apply and
    undo support.
@@ -175,7 +176,9 @@ Immediate next steps:
 8. Keep retrieval quality measurable as the RAG stack changes.
    Started with `tools/search_rag_eval.py`, an offline synthetic eval harness
    covering transcript-only matches, semantic travel planning, deterministic
-   filters, visual placeholder honesty, and agentic collection seeds.
+   filters, visual placeholder honesty, agentic collection seeds, and the
+   first agent tool contracts for transcript, visual, and result-explanation
+   payloads.
 9. Harden Instagram auth with session validation, expiry messaging, and
    encrypted storage.
 10. Add OCR for scanned/image-only PDFs and imported images.

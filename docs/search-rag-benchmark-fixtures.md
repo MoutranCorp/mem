@@ -14,8 +14,10 @@ python tools\search_rag_eval.py
 The harness uses `tools/search_rag_eval_fixture.json` and mirrors the current
 retrieval stack closely enough to catch regressions in query parsing, hard
 filters, timestamp requirements, visual placeholder honesty, rank signals, and
-agentic collection seed coverage. It is intentionally synthetic, so it does not
-need network access, cookies, an Android device, or a live app database.
+agentic collection seed coverage. It also checks first-pass agent tool
+contracts for `get_transcript`, `get_visual_observations`, and
+`explain_result`. It is intentionally synthetic, so it does not need network
+access, cookies, an Android device, or a live app database.
 
 For machine-readable output:
 
@@ -140,6 +142,24 @@ Expected:
 - Undo removes the memberships added by that action.
 - The action remains auditable in `agent_actions`.
 - `tag_sources` creates the same kind of approval-gated draft for source tags.
+
+### Agent Context Tools
+
+Sources:
+
+- A captioned video with transcript chunks.
+- A playable/local video with visual placeholder chunks and observation rows.
+- A search result with rank signals.
+
+Expected:
+
+- `get_transcript` returns caption tracks, timestamped transcript segments, and
+  a coverage note that tells a model when a source is metadata-only.
+- `get_visual_observations` returns observation rows plus visual chunks, while
+  preserving the current caution that placeholders are not detected events.
+- `explain_result` reruns retrieval for a query/source pair and returns the
+  citation, match reason, retrieval mode, and rank signals an agent can cite or
+  use for debugging.
 
 ## Manual Smoke Test
 
