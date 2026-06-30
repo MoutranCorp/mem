@@ -2519,6 +2519,7 @@ private fun LibraryScreen(state: MemAppState) {
             LibraryMode.Feed -> LibraryFeed(
                 modifier = Modifier.weight(1f),
                 memories = displayedMemories,
+                inlinePlaybackEnabled = state.libraryQuery.isBlank(),
                 seekBackSeconds = state.appearance.seekBackSeconds,
                 seekForwardSeconds = state.appearance.seekForwardSeconds,
                 onAddToPlaylist = state::addToPlaylist,
@@ -4225,6 +4226,7 @@ private fun LibraryCollections(collections: List<CollectionUi>) {
 private fun LibraryFeed(
     modifier: Modifier = Modifier,
     memories: List<MemoryUi>,
+    inlinePlaybackEnabled: Boolean,
     seekBackSeconds: Int,
     seekForwardSeconds: Int,
     onAddToPlaylist: (MemoryUi) -> Unit,
@@ -4234,8 +4236,9 @@ private fun LibraryFeed(
     onDeleteMemory: (MemoryUi) -> Unit,
 ) {
     val listState = rememberLazyListState()
-    val autoPlayMemoryId by remember(memories, listState) {
+    val autoPlayMemoryId by remember(memories, listState, inlinePlaybackEnabled) {
         derivedStateOf {
+            if (!inlinePlaybackEnabled) return@derivedStateOf null
             listState.layoutInfo.visibleItemsInfo
                 .mapNotNull { item -> memories.getOrNull(item.index) }
                 .firstOrNull { it.localPlaybackPath != null }
@@ -4248,7 +4251,7 @@ private fun LibraryFeed(
         verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
         contentPadding = PaddingValues(bottom = 148.dp),
     ) {
-        items(memories) { memory ->
+        items(memories, key = { it.id }) { memory ->
             FeedItem(
                 memory = memory,
                 onAddToPlaylist = onAddToPlaylist,
@@ -4256,6 +4259,7 @@ private fun LibraryFeed(
                 onOpenMemory = onOpenMemory,
                 onOpenDetail = onOpenDetail,
                 onDeleteMemory = onDeleteMemory,
+                inlinePlaybackEnabled = inlinePlaybackEnabled,
                 autoPlayInline = memory.id == autoPlayMemoryId,
                 seekBackSeconds = seekBackSeconds,
                 seekForwardSeconds = seekForwardSeconds,
@@ -4279,7 +4283,7 @@ private fun LibraryGrid(
         horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
         verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
     ) {
-        items(memories) { memory ->
+        items(memories, key = { it.id }) { memory ->
             MemoryGridCard(memory, onOpenMemory, onOpenDetail, onDeleteMemory)
         }
     }
@@ -4296,7 +4300,7 @@ private fun LibraryTimeline(
         verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
         contentPadding = PaddingValues(bottom = 148.dp),
     ) {
-        items(memories) { memory ->
+        items(memories, key = { it.id }) { memory ->
             SurfaceCard(
                 modifier = Modifier.clickable { onOpenDetail(memory) },
             ) {
@@ -4314,6 +4318,7 @@ private fun FeedItem(
     onOpenMemory: (MemoryUi) -> Unit,
     onOpenDetail: (MemoryUi) -> Unit,
     onDeleteMemory: (MemoryUi) -> Unit,
+    inlinePlaybackEnabled: Boolean,
     autoPlayInline: Boolean,
     seekBackSeconds: Int,
     seekForwardSeconds: Int,
@@ -4348,18 +4353,28 @@ private fun FeedItem(
                 modifier = Modifier.clickable { onOpenDetail(memory) },
             )
             memory.localPlaybackPath?.let { path ->
-                LocalVideoPlayer(
-                    path = path,
-                    autoPlay = autoPlayInline,
-                    seekBackSeconds = seekBackSeconds,
-                    seekForwardSeconds = seekForwardSeconds,
-                    controlsInitiallyVisible = false,
-                    onExpand = { onOpenMemory(memory) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
-                        .clip(MemTokens.shapes.lg),
-                )
+                if (inlinePlaybackEnabled) {
+                    LocalVideoPlayer(
+                        path = path,
+                        autoPlay = autoPlayInline,
+                        seekBackSeconds = seekBackSeconds,
+                        seekForwardSeconds = seekForwardSeconds,
+                        controlsInitiallyVisible = false,
+                        onExpand = { onOpenMemory(memory) },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(16f / 9f)
+                            .clip(MemTokens.shapes.lg),
+                    )
+                } else {
+                    SearchVideoPreview(
+                        memory = memory,
+                        onOpenMemory = onOpenMemory,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .aspectRatio(16f / 9f),
+                    )
+                }
             }
             TagRow(memory.tags)
             DividerLine()
@@ -4369,6 +4384,50 @@ private fun FeedItem(
                 InlineAction("Tag", Icons.Rounded.Tag) { onTagForReview(memory) }
                 InlineAction("Delete", Icons.Rounded.DeleteOutline) { onDeleteMemory(memory) }
             }
+        }
+    }
+}
+
+@Composable
+private fun SearchVideoPreview(
+    memory: MemoryUi,
+    onOpenMemory: (MemoryUi) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .clip(MemTokens.shapes.lg)
+            .background(Color.Black)
+            .clickable { onOpenMemory(memory) },
+        contentAlignment = Alignment.Center,
+    ) {
+        SourceVisual(
+            memory = memory,
+            modifier = Modifier.fillMaxSize(),
+            onClick = { onOpenMemory(memory) },
+        )
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.18f)),
+        )
+        IconButton(
+            onClick = { onOpenMemory(memory) },
+            modifier = Modifier
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.54f)),
+        ) {
+            Icon(Icons.Rounded.PlayCircle, contentDescription = "Play in Mem", tint = Color.White)
+        }
+        IconButton(
+            onClick = { onOpenMemory(memory) },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(MemTokens.spacing.xs)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.54f)),
+        ) {
+            Icon(Icons.Rounded.Fullscreen, contentDescription = "Expand", tint = Color.White)
         }
     }
 }
