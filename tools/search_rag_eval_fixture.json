@@ -217,6 +217,15 @@
       "requiresRankSignals": true,
       "requiresContentDepth": "transcript",
       "requiresText": "yt_founder_distribution"
+    },
+    {
+      "name": "Deterministic agent answer is cited and tool-backed",
+      "tool": "agent_answer",
+      "query": "help me build a Japan itinerary",
+      "requiresCitations": true,
+      "requiresUsedTools": true,
+      "requiresContentDepth": "transcript",
+      "requiresText": "grounded source"
     }
   ],
   "queries": [

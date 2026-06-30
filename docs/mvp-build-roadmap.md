@@ -333,7 +333,11 @@ Exit criteria:
    `explain_result`, `summarize_source`, and `draft_collection` tools through
    the same structured tool-call interface intended for a model-backed agent
    runtime. Tagging is now part of the same auditable mutation flow through
-   `tag_sources`, with approval preview, apply, and undo.
+   `tag_sources`, with approval preview, apply, and undo. The first
+   `AgentRuntime` implementation now executes the memory tools
+   deterministically and returns cited answer payloads for the Library agent
+   panel; a model-backed runtime can replace the reasoning layer while keeping
+   the same tool boundary.
 7. Add visual observations for local/authorized videos so Mem can answer visual
    event queries that transcripts cannot cover. Started with local frame-sample
    observations for playable videos, indexed as `visual` chunks. A real

@@ -3,6 +3,8 @@ package com.moutrancorp.memspike.ai
 import java.security.MessageDigest
 import java.util.Locale
 import kotlin.math.sqrt
+import org.json.JSONArray
+import org.json.JSONObject
 
 enum class AiCapabilityStatus {
     Active,
@@ -41,10 +43,10 @@ object DefaultAiProviderRegistry {
             AiPipelineStatus(
                 capability = "Agent runtime",
                 activeProvider = "local",
-                activeModel = "tool-preview",
+                activeModel = "deterministic-tool-runtime",
                 status = AiCapabilityStatus.Fallback,
                 privacy = "On device",
-                notes = "Current actions are deterministic previews; final Q&A and planning need a model-backed runtime.",
+                notes = "DeterministicToolAgentRuntime executes the same memory tools a model-backed runtime will use, returning cited local answer payloads.",
             ),
             AiPipelineStatus(
                 capability = "Visual understanding",
@@ -152,6 +154,161 @@ interface AgentRuntime {
         availableTools: List<String>,
         toolRunner: suspend (AgentToolCall) -> AgentToolResult,
     ): String
+}
+
+class DeterministicToolAgentRuntime : AgentRuntime {
+    override suspend fun answerWithTools(
+        userRequest: String,
+        availableTools: List<String>,
+        toolRunner: suspend (AgentToolCall) -> AgentToolResult,
+    ): String {
+        val query = userRequest.trim()
+        if (query.isBlank()) {
+            return JSONObject()
+                .put("ok", false)
+                .put("runtime", "deterministic-tool-runtime")
+                .put("error", "userRequest is required")
+                .toString()
+        }
+        if ("search_memory" !in availableTools) {
+            return JSONObject()
+                .put("ok", false)
+                .put("runtime", "deterministic-tool-runtime")
+                .put("error", "search_memory tool is unavailable")
+                .toString()
+        }
+
+        val search = toolRunner(
+            AgentToolCall(
+                name = "search_memory",
+                argumentsJson = JSONObject()
+                    .put("query", query)
+                    .put("limit", 6)
+                    .toString(),
+            ),
+        ).json()
+        val citations = search.optJSONArray("citations") ?: JSONArray()
+        val topCitations = citations.takeObjects(4)
+        val enrichedSources = JSONArray()
+        val usedSourceIds = mutableSetOf<String>()
+        topCitations.forEach { citation ->
+            val sourceId = citation.optString("sourceId")
+            if (sourceId.isBlank() || !usedSourceIds.add(sourceId)) return@forEach
+            val sourceContext = runToolIfAvailable(
+                availableTools = availableTools,
+                toolName = "get_source_context",
+                args = JSONObject().put("sourceId", sourceId).put("limit", 4),
+                toolRunner = toolRunner,
+            )
+            val transcript = if (citation.optString("chunkType") in setOf("transcript", "transcript_segment")) {
+                runToolIfAvailable(
+                    availableTools = availableTools,
+                    toolName = "get_transcript",
+                    args = JSONObject().put("sourceId", sourceId).put("limit", 4),
+                    toolRunner = toolRunner,
+                )
+            } else {
+                null
+            }
+            val visual = if (citation.optString("chunkType") == "visual") {
+                runToolIfAvailable(
+                    availableTools = availableTools,
+                    toolName = "get_visual_observations",
+                    args = JSONObject().put("sourceId", sourceId).put("limit", 4),
+                    toolRunner = toolRunner,
+                )
+            } else {
+                null
+            }
+            enrichedSources.put(
+                JSONObject()
+                    .put("citation", citation)
+                    .put("sourceContext", sourceContext)
+                    .put("transcript", transcript)
+                    .put("visual", visual),
+            )
+        }
+
+        val answer = buildDeterministicAnswer(query, topCitations, enrichedSources)
+        return JSONObject()
+            .put("ok", true)
+            .put("runtime", "deterministic-tool-runtime")
+            .put("query", query)
+            .put("answer", answer)
+            .put("citationCount", citations.length())
+            .put("sourceCount", usedSourceIds.size)
+            .put("citations", JSONArray(topCitations))
+            .put("enrichedSources", enrichedSources)
+            .put("usedTools", JSONArray(listOf("search_memory") + listOf("get_source_context", "get_transcript", "get_visual_observations").filter { it in availableTools }))
+            .put("requiresModelUpgrade", true)
+            .put("upgradeNote", "This runtime is deterministic and grounded. Planning, nuanced synthesis, and multi-step reasoning should use a model-backed AgentRuntime over the same tools.")
+            .toString()
+    }
+
+    private suspend fun runToolIfAvailable(
+        availableTools: List<String>,
+        toolName: String,
+        args: JSONObject,
+        toolRunner: suspend (AgentToolCall) -> AgentToolResult,
+    ): JSONObject? {
+        if (toolName !in availableTools) return null
+        return toolRunner(AgentToolCall(name = toolName, argumentsJson = args.toString())).json()
+    }
+
+    private fun buildDeterministicAnswer(query: String, citations: List<JSONObject>, enrichedSources: JSONArray): String {
+        if (citations.isEmpty()) {
+            return "I could not find indexed memory chunks for \"$query\". Try capturing sources with transcripts, article text, notes, PDFs, or use filters like type:video, has:transcript, site:youtube.com, status:needs_auth."
+        }
+        val depthCounts = citations
+            .map { it.optString("contentDepth", "indexed") }
+            .groupingBy { it }
+            .eachCount()
+        val sourceCount = citations.map { it.optString("sourceId") }.filter { it.isNotBlank() }.distinct().size
+        val strongest = citations.first()
+        val evidence = citations.take(3).joinToString(" ") { citation ->
+            val title = citation.optString("title")
+            val reason = citation.optString("matchReason")
+            val snippet = citation.optString("snippet").take(180)
+            "[$title] $reason: $snippet"
+        }
+        val caveat = contentCaveat(depthCounts)
+        return buildString {
+            append("I found $sourceCount grounded source${if (sourceCount == 1) "" else "s"} for \"$query\". ")
+            append("The strongest citation is ${strongest.optString("title")} (${strongest.optString("contentDepth", "indexed")}). ")
+            append(caveat)
+            append(" Evidence: ")
+            append(evidence)
+            if (enrichedSources.length() > 0) {
+                append(" I used memory tools to enrich the top citations before answering.")
+            }
+        }
+    }
+
+    private fun contentCaveat(depthCounts: Map<String, Int>): String {
+        return when {
+            depthCounts.keys.any { it == "transcript" || it == "transcript_visual" } -> "At least one result is transcript-backed, so spoken content can be cited. "
+            depthCounts.keys.any { it == "visual" } -> "At least one result is visual-context-backed, but current visual observations may still be placeholders. "
+            depthCounts.keys.any { it == "metadata_only" || it == "auth_required" || it == "unindexed" } -> "Some results are shallow or auth-gated, so I should not imply transcript/body evidence where it is missing. "
+            else -> ""
+        }
+    }
+}
+
+private fun AgentToolResult.json(): JSONObject {
+    return runCatching { JSONObject(resultJson) }.getOrElse {
+        JSONObject()
+            .put("ok", false)
+            .put("tool", call.name)
+            .put("error", "Tool returned invalid JSON")
+    }
+}
+
+private fun JSONArray.takeObjects(limit: Int): List<JSONObject> {
+    return buildList {
+        for (index in 0 until minOf(length(), limit)) {
+            optJSONObject(index)?.let(::add)
+        }
+    }
 }
 
 fun localHashEmbedding(text: String, dimensions: Int = 128): FloatArray {

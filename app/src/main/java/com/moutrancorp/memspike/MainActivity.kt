@@ -163,6 +163,7 @@ import com.moutrancorp.memspike.data.AssetEntity
 import com.moutrancorp.memspike.data.CollectionSummary
 import com.moutrancorp.memspike.data.ContentChunkData
 import com.moutrancorp.memspike.data.AgentActionDraft
+import com.moutrancorp.memspike.data.AgentAnswerData
 import com.moutrancorp.memspike.data.ExtractedSourceData
 import com.moutrancorp.memspike.data.ExtractedCaptionTrack
 import com.moutrancorp.memspike.data.ExtractedContentChunk
@@ -367,6 +368,8 @@ private class MemAppState(
         private set
     var pendingAgentAction by mutableStateOf<AgentActionUi?>(null)
         private set
+    var agentAnswer by mutableStateOf<AgentAnswerUi?>(null)
+        private set
     var isExtracting by mutableStateOf(false)
     var logOutput by mutableStateOf("Ready. Share or paste a link to extract metadata on-device.")
     var appearance by mutableStateOf(appearanceStore.load())
@@ -412,6 +415,18 @@ private class MemAppState(
     fun updateLibraryQuery(query: String) {
         libraryQuery = query
         libraryQueryFlow.value = query
+        if (query.isBlank()) {
+            agentAnswer = null
+        } else {
+            val requestedQuery = query
+            agentAnswer = AgentAnswerUi.loading(requestedQuery)
+            scope.launch {
+                val answer = repository.answerMemoryRequest(requestedQuery).toAgentAnswerUi(requestedQuery)
+                if (libraryQuery == requestedQuery) {
+                    agentAnswer = answer
+                }
+            }
+        }
     }
 
     fun refreshRagIndexHealth() {
@@ -1757,6 +1772,41 @@ private data class AgentActionUi(
     val sourceCount: Int,
 )
 
+private data class AgentAnswerUi(
+    val query: String,
+    val runtime: String,
+    val answer: String,
+    val citationCount: Int,
+    val sourceCount: Int,
+    val usedTools: List<String>,
+    val isLoading: Boolean = false,
+) {
+    companion object {
+        fun loading(query: String): AgentAnswerUi {
+            return AgentAnswerUi(
+                query = query,
+                runtime = "deterministic-tool-runtime",
+                answer = "Building a grounded answer from local memory tools...",
+                citationCount = 0,
+                sourceCount = 0,
+                usedTools = emptyList(),
+                isLoading = true,
+            )
+        }
+    }
+}
+
+private fun AgentAnswerData.toAgentAnswerUi(query: String): AgentAnswerUi {
+    return AgentAnswerUi(
+        query = query,
+        runtime = runtime,
+        answer = answer.ifBlank { "No grounded answer is available yet." },
+        citationCount = citationCount,
+        sourceCount = sourceCount,
+        usedTools = usedTools,
+    )
+}
+
 private fun AgentActionDraft.toAgentActionUi(): AgentActionUi {
     return AgentActionUi(
         id = id,
@@ -2434,6 +2484,7 @@ private fun LibraryScreen(state: MemAppState) {
                 query = state.libraryQuery,
                 results = state.searchResults,
                 tools = state.memoryTools,
+                answer = state.agentAnswer,
                 onCreateCollection = state::createCollectionFromSearchResults,
             )
             Spacer(modifier = Modifier.height(MemTokens.spacing.md))
@@ -2528,6 +2579,7 @@ private fun LocalAgentSearchPanel(
     query: String,
     results: List<SearchResultUi>,
     tools: List<String>,
+    answer: AgentAnswerUi?,
     onCreateCollection: () -> Unit,
 ) {
     val sourceCount = results.map { it.sourceId }.distinct().size
@@ -2546,7 +2598,7 @@ private fun LocalAgentSearchPanel(
                 Text("${results.size} cites", color = Color.White.copy(alpha = 0.62f), fontSize = 12.sp)
             }
             Text(
-                text = if (results.isEmpty()) {
+                text = answer?.answer ?: if (results.isEmpty()) {
                     "I could not find indexed chunks for \"$query\" yet. Capture sources with transcripts/articles or try deterministic filters like type:video, site:youtube.com, has:transcript."
                 } else {
                     "I found $sourceCount source${if (sourceCount == 1) "" else "s"} with grounded chunks for \"$query\". Retrieval: $retrievalModes. Context types: $contextTypes. Transcript-backed citations: $transcriptCount."
@@ -2555,8 +2607,15 @@ private fun LocalAgentSearchPanel(
                 fontSize = 13.sp,
                 lineHeight = 18.sp,
             )
+            answer?.let {
+                Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
+                    MetadataTiny("${it.sourceCount} sources")
+                    MetadataTiny("${it.citationCount} citations")
+                    MetadataTiny(if (it.isLoading) "running" else it.runtime)
+                }
+            }
             Text(
-                text = "Tools: ${tools.joinToString(", ")}",
+                text = "Tools: ${(answer?.usedTools?.takeIf { it.isNotEmpty() } ?: tools).joinToString(", ")}",
                 color = Color.White.copy(alpha = 0.58f),
                 fontSize = 11.sp,
                 maxLines = 1,

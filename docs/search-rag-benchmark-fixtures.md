@@ -163,6 +163,8 @@ Expected:
 - Tool payloads and citations include content-depth signals so model prompts can
   distinguish transcript-ready, visual, metadata-only, auth-required, and
   unindexed memories.
+- The deterministic agent runtime returns cited answer payloads with used-tool
+  metadata, so the UI and future model runtime share the same contract.
 
 ## Manual Smoke Test
 

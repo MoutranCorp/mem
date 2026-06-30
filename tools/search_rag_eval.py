@@ -711,6 +711,55 @@ def tool_explain_result(query: str, source_id: str, chunks: list[Chunk]) -> dict
     }
 
 
+def tool_agent_answer(query: str, chunks: list[Chunk], auxiliary: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    results = search(chunks, query)
+    citations = []
+    enriched_sources = []
+    seen_sources: set[str] = set()
+    for result in results[:4]:
+        citation = {
+            "sourceId": result.chunk.source_id,
+            "chunkId": result.chunk.id,
+            "title": result.chunk.source_title,
+            "chunkType": result.chunk.chunk_type,
+            "contentDepth": content_depth_for_chunk(result.chunk),
+            "snippet": result.chunk.text[:360],
+            "matchReason": f"{result.retrieval_mode} {result.chunk.chunk_type} match",
+            "retrievalMode": result.retrieval_mode,
+            "rankSignals": result.rank_signals,
+        }
+        citations.append(citation)
+        if result.chunk.source_id not in seen_sources:
+            seen_sources.add(result.chunk.source_id)
+            enriched_sources.append(
+                {
+                    "citation": citation,
+                    "contentProfile": source_content_profile(result.chunk.source_id, chunks, auxiliary),
+                },
+            )
+    if not citations:
+        answer = f'I could not find indexed memory chunks for "{query}".'
+    else:
+        answer = (
+            f'I found {len(seen_sources)} grounded source{"s" if len(seen_sources) != 1 else ""} for "{query}". '
+            f'The strongest citation is {citations[0]["title"]} ({citations[0]["contentDepth"]}). '
+            f'Evidence: {citations[0]["snippet"]}'
+        )
+    return {
+        "tool": "agent_answer",
+        "ok": True,
+        "runtime": "deterministic-tool-runtime",
+        "query": query,
+        "answer": answer,
+        "citationCount": len(citations),
+        "sourceCount": len(seen_sources),
+        "citations": citations,
+        "enrichedSources": enriched_sources,
+        "usedTools": ["search_memory", "get_source_context", "get_transcript", "get_visual_observations"],
+        "requiresModelUpgrade": True,
+    }
+
+
 def source_content_profile(
     source_id: str,
     chunks: list[Chunk],
@@ -803,6 +852,8 @@ def check_tool_contract(
         payload = tool_get_visual_observations(source_id, chunks, auxiliary, contract.get("limit", 40))
     elif tool == "explain_result":
         payload = tool_explain_result(contract["query"], source_id, chunks)
+    elif tool == "agent_answer":
+        payload = tool_agent_answer(contract["query"], chunks, auxiliary)
     else:
         return [f"unknown tool contract: {tool}"]
 
@@ -833,6 +884,10 @@ def check_tool_contract(
             failures.append(f"missing required text {required_text!r}")
     if contract.get("requiresRankSignals") and "rankSignals" not in json.dumps(payload):
         failures.append("missing rank signals in tool payload")
+    if contract.get("requiresCitations") and payload.get("citationCount", 0) < 1:
+        failures.append("missing cited answer citations")
+    if contract.get("requiresUsedTools") and not payload.get("usedTools"):
+        failures.append("missing used tools")
     required_depth = contract.get("requiresContentDepth")
     if required_depth and required_depth not in json.dumps(payload):
         failures.append(f"missing content depth {required_depth}")

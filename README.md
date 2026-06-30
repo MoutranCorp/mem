@@ -171,7 +171,9 @@ Immediate next steps:
    `explain_result`, `summarize_source`, and `draft_collection` through the
    same tool-call interface a model-backed runtime will use. Agent-driven tag
    actions are now approval-gated too through `tag_sources`, with apply and
-   undo support.
+   undo support. `DeterministicToolAgentRuntime` now runs over those tools to
+   produce cited local answer payloads, giving the app a working runtime
+   scaffold before a cloud/local model provider is selected.
 7. Build visual indexing for local/authorized videos so Mem can answer queries
    about what happens visually, not only what is spoken.
    Started with local frame-sample visual observations for playable videos,

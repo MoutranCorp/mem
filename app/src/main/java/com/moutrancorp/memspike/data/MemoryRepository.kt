@@ -2,6 +2,8 @@ package com.moutrancorp.memspike.data
 
 import com.moutrancorp.memspike.ai.AgentToolCall
 import com.moutrancorp.memspike.ai.AgentToolResult
+import com.moutrancorp.memspike.ai.AgentRuntime
+import com.moutrancorp.memspike.ai.DeterministicToolAgentRuntime
 import com.moutrancorp.memspike.ai.EmbeddingInput
 import com.moutrancorp.memspike.ai.EmbeddingProvider
 import com.moutrancorp.memspike.ai.EmbeddingVector
@@ -38,6 +40,7 @@ private const val SEARCH_RESULT_LIMIT = 40
 class MemoryRepository(private val database: MemDatabase) {
     private val embeddingProvider: EmbeddingProvider = LocalHashEmbeddingProvider()
     private val vectorIndex: VectorIndex = RoomExactScanVectorIndex(database.chunkEmbeddingDao(), LOCAL_SEMANTIC_EXACT_SCAN_LIMIT)
+    private val agentRuntime: AgentRuntime = DeterministicToolAgentRuntime()
 
     fun availableMemoryTools(): List<String> {
         return listOf(
@@ -68,6 +71,30 @@ class MemoryRepository(private val database: MemDatabase) {
                 .put("error", "Unknown memory tool: ${call.name}")
         }
         return AgentToolResult(call = call, resultJson = result.toString())
+    }
+
+    suspend fun answerMemoryRequest(request: String): AgentAnswerData {
+        val resultJson = agentRuntime.answerWithTools(
+            userRequest = request,
+            availableTools = availableMemoryTools(),
+            toolRunner = ::runMemoryTool,
+        )
+        val result = runCatching { JSONObject(resultJson) }.getOrElse {
+            JSONObject()
+                .put("ok", false)
+                .put("answer", "Agent runtime returned invalid JSON.")
+                .put("citationCount", 0)
+                .put("sourceCount", 0)
+        }
+        return AgentAnswerData(
+            ok = result.optBoolean("ok", false),
+            runtime = result.optString("runtime", "unknown"),
+            answer = result.optString("answer", result.optString("error", "")),
+            citationCount = result.optInt("citationCount", 0),
+            sourceCount = result.optInt("sourceCount", 0),
+            usedTools = result.optJSONArray("usedTools").orEmptyStrings(),
+            rawJson = resultJson,
+        )
     }
 
     suspend fun ragIndexHealth(): RagIndexHealth {
@@ -1374,6 +1401,16 @@ data class AgentActionDraft(
     val state: String,
     val rationale: String,
     val sourceCount: Int,
+)
+
+data class AgentAnswerData(
+    val ok: Boolean,
+    val runtime: String,
+    val answer: String,
+    val citationCount: Int,
+    val sourceCount: Int,
+    val usedTools: List<String>,
+    val rawJson: String,
 )
 
 data class SourceSnapshot(
