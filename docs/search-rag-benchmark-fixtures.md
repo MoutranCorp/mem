@@ -77,8 +77,10 @@ Queries:
 
 Expected:
 
-- Until visual indexing is implemented, text/transcript results may appear but
-  the app must not claim strong visual evidence.
+- Baseline local frame-sample observations should appear for playable
+  local/authorized videos under `has:visual`.
+- Text/transcript results may still appear, but baseline visual observations
+  must not claim detected actions or objects.
 - Once visual observations exist, cited results should say `visual` or
   `semantic visual` and include timestamps.
 
@@ -110,4 +112,3 @@ Expected:
 7. Draft a collection from citations.
 8. Confirm the preview appears before applying.
 9. Apply, then undo.
-

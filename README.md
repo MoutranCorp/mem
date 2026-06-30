@@ -150,6 +150,9 @@ Immediate next steps:
    create auditable agent action records with preview, apply, and undo.
 7. Build visual indexing for local/authorized videos so Mem can answer queries
    about what happens visually, not only what is spoken.
+   Started with local frame-sample visual observations for playable videos,
+   indexed as `visual` chunks for `has:visual` search and future model-backed
+   scene/action/OCR analysis.
 8. Harden Instagram auth with session validation, expiry messaging, and
    encrypted storage.
 9. Add OCR for scanned/image-only PDFs and imported images.

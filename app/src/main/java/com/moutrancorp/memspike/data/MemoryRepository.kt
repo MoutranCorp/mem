@@ -561,7 +561,14 @@ class MemoryRepository(private val database: MemDatabase) {
             )
         }
         ensureTags(source.id, listOf("video", "local", "playable", "done"))
-        indexSource(source, source.summary)
+        val visualText = indexPlayableVideoVisualContext(
+            source = source,
+            playbackAssetId = stableId("asset:${source.id}:playback"),
+            thumbnailPath = thumbnailPath,
+            durationMs = durationMs,
+            now = now,
+        )
+        indexSource(source, listOfNotNull(source.summary, visualText).joinToString("\n\n"))
         return source.id
     }
 
@@ -616,7 +623,15 @@ class MemoryRepository(private val database: MemDatabase) {
             )
         }
         ensureTags(source.id, listOf("video", "local", "playable", "authorized"))
-        indexSource(source.copy(processingState = "done", authState = "authorized"), source.summary)
+        val updated = source.copy(processingState = "done", authState = "authorized")
+        val visualText = indexPlayableVideoVisualContext(
+            source = updated,
+            playbackAssetId = stableId("asset:${source.id}:playback"),
+            thumbnailPath = thumbnailPath,
+            durationMs = durationMs,
+            now = now,
+        )
+        indexSource(updated, listOfNotNull(source.summary, visualText).joinToString("\n\n"))
         return true
     }
 
@@ -701,6 +716,54 @@ class MemoryRepository(private val database: MemDatabase) {
                 }
             }
         return indexedText.toString()
+    }
+
+    private suspend fun indexPlayableVideoVisualContext(
+        source: SourceEntity,
+        playbackAssetId: String,
+        thumbnailPath: String?,
+        durationMs: Long?,
+        now: Long,
+    ): String {
+        database.visualObservationDao().deleteForSource(source.id)
+        database.documentChunkDao().findBySourceAndType(source.id, "visual").forEach { chunk ->
+            database.chunkSearchDao().deleteForChunk(chunk.id)
+            database.chunkEmbeddingDao().deleteForChunk(chunk.id)
+        }
+        database.documentChunkDao().deleteForSourceAndTypes(source.id, listOf("visual"))
+        ensureLocalEmbeddingModel(now)
+        val sampleTimes = visualSampleTimes(durationMs)
+        val observations = sampleTimes.mapIndexed { index, timeMs ->
+            VisualObservationEntity(
+                id = stableId("visual:${source.id}:frame_sample:$timeMs"),
+                sourceId = source.id,
+                assetId = playbackAssetId,
+                observationType = "frame_sample",
+                text = visualObservationText(source, timeMs, durationMs, thumbnailPath, index),
+                confidence = 0.42f,
+                provider = "local_frame_sampler",
+                model = "metadata-frame-v1",
+                startTimeMs = timeMs,
+                endTimeMs = timeMs,
+                createdAt = now,
+            )
+        }
+        observations.forEach { database.visualObservationDao().upsert(it) }
+        val chunks = observations.map { observation ->
+            ExtractedContentChunk(
+                text = observation.text,
+                chunkType = "visual",
+                language = null,
+                startOffset = null,
+                endOffset = null,
+                startTimeMs = observation.startTimeMs,
+                endTimeMs = observation.endTimeMs,
+                page = null,
+                sectionTitle = "Visual observation",
+                provider = observation.provider,
+            )
+        }
+        return storeChunks(source, chunks, now)
     }
 
     private suspend fun ensureLocalEmbeddingModel(now: Long) {
@@ -1003,6 +1066,39 @@ private fun ByteArray.toFloatVector(dimensions: Int): FloatArray {
         if (buffer.remaining() >= 4) values[index] = buffer.float
     }
     return values
+}
+
+private fun visualSampleTimes(durationMs: Long?): List<Long> {
+    val duration = durationMs?.coerceAtLeast(0L) ?: 0L
+    if (duration <= 0L) return listOf(1_000L)
+    val safeEnd = (duration - 1_000L).coerceAtLeast(1_000L)
+    return listOf(
+        1_000L,
+        duration / 3L,
+        (duration * 2L) / 3L,
+        safeEnd,
+    )
+        .map { it.coerceIn(0L, safeEnd) }
+        .distinct()
+        .take(4)
+}
+
+private fun visualObservationText(
+    source: SourceEntity,
+    timeMs: Long,
+    durationMs: Long?,
+    thumbnailPath: String?,
+    index: Int,
+): String {
+    val timestamp = timeMs.timestampLabel()
+    val duration = durationMs?.timestampLabel()
+    val thumbnailState = if (thumbnailPath.isNullOrBlank()) "No local thumbnail file is available." else "A local thumbnail/frame asset is available."
+    return buildString {
+        append("Visual frame sample ${index + 1} for ${source.title} at $timestamp.")
+        duration?.let { append(" Video duration is $it.") }
+        append(" $thumbnailState")
+        append(" This is a local visual observation placeholder from playable media; it supports has:visual filtering and future model-backed action, object, OCR, and scene analysis without claiming detected objects or events yet.")
+    }
 }
 
 private fun Long.timestampLabel(): String {

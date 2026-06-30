@@ -483,6 +483,9 @@ interface DocumentChunkDao {
 
     @Query("SELECT * FROM document_chunks WHERE sourceId = :sourceId ORDER BY COALESCE(startTimeMs, startOffset, 0) LIMIT :limit")
     suspend fun findBySource(sourceId: String, limit: Int = 200): List<DocumentChunkEntity>
+
+    @Query("SELECT * FROM document_chunks WHERE sourceId = :sourceId AND chunkType = :chunkType")
+    suspend fun findBySourceAndType(sourceId: String, chunkType: String): List<DocumentChunkEntity>
 }
 
 @Dao
@@ -581,6 +584,9 @@ interface ChunkEmbeddingDao {
     @Query("DELETE FROM chunk_embeddings WHERE sourceId = :sourceId")
     suspend fun deleteForSource(sourceId: String)
 
+    @Query("DELETE FROM chunk_embeddings WHERE chunkId = :chunkId")
+    suspend fun deleteForChunk(chunkId: String)
+
     @Query(
         """
         SELECT sources.id AS sourceId, document_chunks.id AS chunkId, sources.title AS title,
@@ -604,6 +610,12 @@ interface ChunkEmbeddingDao {
 interface VisualObservationDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(observation: VisualObservationEntity)
+
+    @Query("DELETE FROM visual_observations WHERE sourceId = :sourceId")
+    suspend fun deleteForSource(sourceId: String)
+
+    @Query("SELECT * FROM visual_observations WHERE sourceId = :sourceId ORDER BY COALESCE(startTimeMs, 0)")
+    suspend fun findBySource(sourceId: String): List<VisualObservationEntity>
 }
 
 @Dao

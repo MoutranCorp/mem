@@ -304,4 +304,6 @@ Exit criteria:
    search-generated collection drafts backed by `agent_actions`, preview,
    apply, and undo.
 7. Add visual observations for local/authorized videos so Mem can answer visual
-   event queries that transcripts cannot cover.
+   event queries that transcripts cannot cover. Started with local frame-sample
+   observations for playable videos, indexed as `visual` chunks. A real
+   model-backed scene/action/OCR analyzer remains.
