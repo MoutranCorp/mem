@@ -3011,6 +3011,7 @@ private fun RagIndexHealthPanel(
             IndexHealthRow("FTS rows", health.chunkSearchRowCount.toString())
             IndexHealthRow("Caption tracks", health.captionTrackCount.toString())
             IndexHealthRow("Visual observations", health.visualObservationCount.toString())
+            IndexHealthRow("Semantic scan window", health.semanticCandidateWindow.toString())
             IndexHealthRow("Playback assets", health.playbackAssetCount.toString())
             IndexHealthRow("Search logs", health.searchQueryCount.toString())
             IndexHealthRow("Agent actions", health.agentActionCount.toString())

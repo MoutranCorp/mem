@@ -26,6 +26,9 @@ private const val LOCAL_EMBEDDING_MODEL_ID = "local_hash_v1_text_128"
 private const val LOCAL_EMBEDDING_PROVIDER = "local"
 private const val LOCAL_EMBEDDING_MODEL = "hash-v1-text-128"
 private const val LOCAL_EMBEDDING_DIMENSIONS = 128
+private const val LOCAL_SEMANTIC_EXACT_SCAN_LIMIT = 10_000
+private const val FILTER_ONLY_SCAN_LIMIT = 10_000
+private const val SEARCH_RESULT_LIMIT = 40
 
 class MemoryRepository(private val database: MemDatabase) {
     fun availableMemoryTools(): List<String> {
@@ -66,6 +69,7 @@ class MemoryRepository(private val database: MemDatabase) {
             visualObservationCount = database.visualObservationDao().countAll(),
             embeddedChunkCount = embeddedChunkCount,
             embeddingCoverage = coverage,
+            semanticCandidateWindow = LOCAL_SEMANTIC_EXACT_SCAN_LIMIT,
             playbackAssetCount = database.assetDao().countByRole("playback"),
             searchQueryCount = database.searchQueryDao().countAll(),
             agentActionCount = database.agentActionDao().countAll(),
@@ -115,13 +119,14 @@ class MemoryRepository(private val database: MemDatabase) {
         val ftsQuery = toFtsQuery(rawQuery)
         val ftsResults = if (ftsQuery.isBlank()) {
             if (parsed.hasStructuredFilters()) {
-                database.chunkEmbeddingDao()
-                    .candidates("text", 5_000)
+                val candidates = database.chunkEmbeddingDao()
+                    .candidates("text", FILTER_ONLY_SCAN_LIMIT)
+                candidates
                     .mapIndexed { index, candidate ->
                         candidate.toSearchResultData(score = 1.0f / (index + 1)).copy(
                             retrievalMode = "filter",
                             matchReason = "Structured filter match",
-                            rankSignals = "filter",
+                            rankSignals = "filter; window=$FILTER_ONLY_SCAN_LIMIT; scanned=${candidates.size}",
                         )
                     }
             } else {
@@ -136,7 +141,7 @@ class MemoryRepository(private val database: MemDatabase) {
             }
         }
         val semanticResults = semanticSearch(rawQuery, 120)
-        val fused = fuseSearchResults(ftsResults, semanticResults, parsed).take(40)
+        val fused = fuseSearchResults(ftsResults, semanticResults, parsed).take(SEARCH_RESULT_LIMIT)
         database.searchQueryDao().insert(
             SearchQueryEntity(
                 id = UUID.randomUUID().toString(),
@@ -151,12 +156,15 @@ class MemoryRepository(private val database: MemDatabase) {
 
     private suspend fun semanticSearch(rawQuery: String, limit: Int): List<SearchResultData> {
         val queryVector = localEmbedding(rawQuery)
-        return database.chunkEmbeddingDao()
-            .candidates("text", 5_000)
+        val candidates = database.chunkEmbeddingDao()
+            .candidates("text", LOCAL_SEMANTIC_EXACT_SCAN_LIMIT)
+        return candidates
             .mapNotNull { candidate ->
                 val score = cosineSimilarity(queryVector, candidate.vector.toFloatVector(candidate.dimensions))
                 if (score < 0.08f) return@mapNotNull null
-                candidate.toSearchResultData(score)
+                candidate.toSearchResultData(score).copy(
+                    rankSignals = "semantic:${"%.2f".format(score)}; window=$LOCAL_SEMANTIC_EXACT_SCAN_LIMIT; scanned=${candidates.size}",
+                )
             }
             .sortedByDescending { it.rankScore }
             .take(limit)
@@ -964,6 +972,7 @@ data class RagIndexHealth(
     val visualObservationCount: Int,
     val embeddedChunkCount: Int,
     val embeddingCoverage: Float,
+    val semanticCandidateWindow: Int,
     val playbackAssetCount: Int,
     val searchQueryCount: Int,
     val agentActionCount: Int,
@@ -975,6 +984,7 @@ data class RagIndexHealth(
         get() = buildList {
             if (sourceCount > 0 && indexedChunkCount == 0) add("No indexed chunks yet")
             if (indexedChunkCount > 0 && embeddingCoverage < 0.95f) add("Embedding coverage below 95%")
+            if (embeddedChunkCount > semanticCandidateWindow) add("Semantic fallback scans newest $semanticCandidateWindow embeddings")
             if (playbackAssetCount > 0 && visualObservationCount == 0) add("Playable videos have no visual observations")
             if (needsAuthSourceCount > 0) add("$needsAuthSourceCount auth-gated source${if (needsAuthSourceCount == 1) "" else "s"}")
         }

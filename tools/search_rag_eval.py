@@ -17,6 +17,8 @@ from typing import Any
 
 DIMENSIONS = 128
 NOW = datetime(2026, 6, 30, tzinfo=timezone.utc)
+LOCAL_SEMANTIC_EXACT_SCAN_LIMIT = 10_000
+FILTER_ONLY_SCAN_LIMIT = 10_000
 
 
 @dataclass(frozen=True)
@@ -426,19 +428,31 @@ def search(chunks: list[Chunk], query: str) -> list[Result]:
             result = Result(chunk=chunk, retrieval_mode="keyword", score=1.0 / (index + 1), rank_signals="keyword")
             add_result(results, parsed, result, index)
     elif parsed.has_structured_filters():
-        for index, chunk in enumerate(sorted(chunks, key=lambda item: item.saved_at, reverse=True)[:5000]):
-            result = Result(chunk=chunk, retrieval_mode="filter", score=1.0 / (index + 1), rank_signals="filter")
+        filter_candidates = sorted(chunks, key=lambda item: item.saved_at, reverse=True)[:FILTER_ONLY_SCAN_LIMIT]
+        for index, chunk in enumerate(filter_candidates):
+            result = Result(
+                chunk=chunk,
+                retrieval_mode="filter",
+                score=1.0 / (index + 1),
+                rank_signals=f"filter; window={FILTER_ONLY_SCAN_LIMIT}; scanned={len(filter_candidates)}",
+            )
             add_result(results, parsed, result, index)
 
     query_vector = local_embedding(query)
     semantic_candidates = []
-    for chunk in chunks:
+    semantic_window = sorted(chunks, key=lambda item: item.saved_at, reverse=True)[:LOCAL_SEMANTIC_EXACT_SCAN_LIMIT]
+    for chunk in semantic_window:
         score = cosine(query_vector, local_embedding(chunk.text))
         if score >= 0.08:
             semantic_candidates.append((score, chunk))
     semantic_candidates.sort(key=lambda item: item[0], reverse=True)
     for index, (score, chunk) in enumerate(semantic_candidates[:120]):
-        result = Result(chunk=chunk, retrieval_mode="semantic", score=score, rank_signals=f"semantic:{score:.2f}")
+        result = Result(
+            chunk=chunk,
+            retrieval_mode="semantic",
+            score=score,
+            rank_signals=f"semantic:{score:.2f}; window={LOCAL_SEMANTIC_EXACT_SCAN_LIMIT}; scanned={len(semantic_window)}",
+        )
         add_result(results, parsed, result, index)
 
     return sorted(results.values(), key=lambda item: item.score, reverse=True)[:40]
