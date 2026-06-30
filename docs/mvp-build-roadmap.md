@@ -65,6 +65,8 @@ Collections/playlists have moved into the bottom dock so the Library mode
 switcher stays compact with Feed/Grid/Timeline. Source thumbnails now have the
 first open behavior: non-downloaded sources open externally, while
 downloaded/local media is reserved for the upcoming in-app playback slice.
+The first source detail sheet is now in place, with summary, copyable source
+URL, asset/playback status, and playlist/tag actions.
 
 Deliverables:
 
@@ -82,6 +84,8 @@ Deliverables:
 - Add durable organization. Started with tags, collections, and playlist
   membership.
 - Add durable assets. Started with remote thumbnail asset records.
+- Add source detail surface. Started with a shared detail sheet for saved
+  sources.
 
 Exit criteria:
 

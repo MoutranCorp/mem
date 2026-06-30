@@ -32,6 +32,8 @@ model used by `mobile-agent`.
   switcher, keeping Feed/Grid/Timeline compact.
 - Clicking non-downloaded source thumbnails opens the original source URL in the
   matching external app/browser when available.
+- Source detail sheet for saved memories, with copyable source URL, summary,
+  asset/playback status, and playlist/tag actions.
 
 The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and
@@ -76,14 +78,15 @@ Immediate next steps:
 
 1. Add in-app local media playback for downloaded/authorized video assets.
 2. Add local thumbnail/file caching for durable assets.
-3. Build collection detail screens and richer tag editing.
-4. Expand FTS indexing to transcript/caption chunks and richer ranking.
-4. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
+3. Expand source detail into full video/article/document layouts.
+4. Build collection detail screens and richer tag editing.
+5. Expand FTS indexing to transcript/caption chunks and richer ranking.
+6. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
    libs and pass their paths to `yt-dlp` through `ffmpeg_location`.
-5. Move long downloads to user-initiated data transfer jobs and media processing
+7. Move long downloads to user-initiated data transfer jobs and media processing
    work to a foreground service with the `mediaProcessing` type.
-6. Add transcript/caption fetching behind an explicit rights confirmation.
-7. Add an embedding/index interface so every extracted record becomes a RAG
+8. Add transcript/caption fetching behind an explicit rights confirmation.
+9. Add an embedding/index interface so every extracted record becomes a RAG
    document with stable IDs, source URL, timestamp, title, tags, and transcript
    segments.
 

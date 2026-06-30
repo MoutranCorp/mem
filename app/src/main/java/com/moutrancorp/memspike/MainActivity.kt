@@ -287,6 +287,8 @@ private class MemAppState(
     var captureText by mutableStateOf("")
     var libraryQuery by mutableStateOf("")
         private set
+    var selectedMemory by mutableStateOf<MemoryUi?>(null)
+        private set
     var isExtracting by mutableStateOf(false)
     var logOutput by mutableStateOf("Ready. Share or paste a link to extract metadata on-device.")
     var appearance by mutableStateOf(appearanceStore.load())
@@ -390,6 +392,14 @@ private class MemAppState(
             repository.tagSource(memory.id)
             logOutput = "Tagged ${memory.title} for review."
         }
+    }
+
+    fun openSourceDetail(memory: MemoryUi) {
+        selectedMemory = memory
+    }
+
+    fun closeSourceDetail() {
+        selectedMemory = null
     }
 
     fun openMemory(memory: MemoryUi) {
@@ -940,6 +950,23 @@ private fun MemScaffold(state: MemAppState) {
             AppearanceSheet(state)
         }
     }
+
+    state.selectedMemory?.let { memory ->
+        ModalBottomSheet(
+            onDismissRequest = { state.closeSourceDetail() },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+            containerColor = MemTokens.colors.surface,
+            contentColor = MemTokens.colors.textPrimary,
+        ) {
+            SourceDetailSheet(
+                memory = memory,
+                onDismiss = state::closeSourceDetail,
+                onOpenMemory = state::openMemory,
+                onAddToPlaylist = state::addToPlaylist,
+                onTagForReview = state::tagForReview,
+            )
+        }
+    }
 }
 
 @Composable
@@ -988,7 +1015,11 @@ private fun MemHomeScreen(state: MemAppState) {
         item {
             SectionHeader("Recent sources", "View all") { state.selectedTab = MainTab.Library }
             Spacer(modifier = Modifier.height(MemTokens.spacing.sm))
-            RecentSourcesRow(state.memories.take(8), onOpenMemory = state::openMemory)
+            RecentSourcesRow(
+                memories = state.memories.take(8),
+                onOpenMemory = state::openMemory,
+                onOpenDetail = state::openSourceDetail,
+            )
         }
         item {
             TodayTimelinePanel()
@@ -1085,9 +1116,17 @@ private fun LibraryScreen(state: MemAppState) {
                 onAddToPlaylist = state::addToPlaylist,
                 onTagForReview = state::tagForReview,
                 onOpenMemory = state::openMemory,
+                onOpenDetail = state::openSourceDetail,
             )
-            LibraryMode.Grid -> LibraryGrid(state.memories, onOpenMemory = state::openMemory)
-            LibraryMode.Timeline -> LibraryTimeline(state.memories)
+            LibraryMode.Grid -> LibraryGrid(
+                memories = state.memories,
+                onOpenMemory = state::openMemory,
+                onOpenDetail = state::openSourceDetail,
+            )
+            LibraryMode.Timeline -> LibraryTimeline(
+                memories = state.memories,
+                onOpenDetail = state::openSourceDetail,
+            )
         }
     }
 }
@@ -1246,7 +1285,11 @@ private fun ContextMetric(value: String, label: String, icon: ImageVector, modif
 }
 
 @Composable
-private fun RecentSourcesRow(memories: List<MemoryUi>, onOpenMemory: (MemoryUi) -> Unit) {
+private fun RecentSourcesRow(
+    memories: List<MemoryUi>,
+    onOpenMemory: (MemoryUi) -> Unit,
+    onOpenDetail: (MemoryUi) -> Unit,
+) {
     LazyRow(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
         items(memories) { memory ->
             SurfaceCard(modifier = Modifier.width(156.dp)) {
@@ -1255,15 +1298,17 @@ private fun RecentSourcesRow(memories: List<MemoryUi>, onOpenMemory: (MemoryUi) 
                     verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
                 ) {
                     SourceVisual(memory, modifier = Modifier.size(48.dp), onClick = { onOpenMemory(memory) })
-                    Text(
-                        memory.title,
-                        color = MemTokens.colors.textPrimary,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(memory.source, color = MemTokens.colors.textSecondary, fontSize = 12.sp, maxLines = 1)
-                    Text(memory.time, color = MemTokens.colors.textTertiary, fontSize = 12.sp)
+                    Column(modifier = Modifier.clickable { onOpenDetail(memory) }) {
+                        Text(
+                            memory.title,
+                            color = MemTokens.colors.textPrimary,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(memory.source, color = MemTokens.colors.textSecondary, fontSize = 12.sp, maxLines = 1)
+                        Text(memory.time, color = MemTokens.colors.textTertiary, fontSize = 12.sp)
+                    }
                 }
             }
         }
@@ -1397,6 +1442,140 @@ private fun AppearanceSheet(state: MemAppState) {
             EnumOptions(DockStyle.entries, state.appearance.dockStyle) {
                 state.updateAppearance(state.appearance.copy(dockStyle = it))
             }
+        }
+    }
+}
+
+@Composable
+private fun SourceDetailSheet(
+    memory: MemoryUi,
+    onDismiss: () -> Unit,
+    onOpenMemory: (MemoryUi) -> Unit,
+    onAddToPlaylist: (MemoryUi) -> Unit,
+    onTagForReview: (MemoryUi) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .verticalScroll(rememberScrollState())
+            .padding(MemTokens.spacing.lg),
+        verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.md),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(memory.type, color = MemTokens.colors.textSecondary, fontSize = 12.sp)
+                Text(
+                    memory.title,
+                    color = MemTokens.colors.textPrimary,
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold,
+                    lineHeight = 31.sp,
+                )
+            }
+            MemIconButton(Icons.Rounded.Close, "Close") { onDismiss() }
+        }
+
+        SourceVisual(
+            memory = memory,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(214.dp),
+            iconSize = 58.dp,
+            onClick = { onOpenMemory(memory) },
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
+            MetadataPill(memory.source, Icons.Rounded.Link, Modifier.weight(1f))
+            MetadataPill(memory.time, Icons.Rounded.Timeline, Modifier.weight(1f))
+        }
+
+        if (memory.tags.isNotEmpty()) {
+            TagRow(memory.tags)
+        }
+
+        SurfaceCard {
+            Column(
+                modifier = Modifier.padding(MemTokens.spacing.md),
+                verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
+            ) {
+                Text("Summary", color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
+                Text(memory.summary, color = MemTokens.colors.textSecondary, fontSize = 14.sp, lineHeight = 20.sp)
+            }
+        }
+
+        SurfaceCard {
+            Column(
+                modifier = Modifier.padding(MemTokens.spacing.md),
+                verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
+            ) {
+                Text("Source", color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
+                DetailRow("URL", memory.openUrl ?: "Unavailable")
+                DetailRow(
+                    "Playback",
+                    if (memory.localPlaybackPath == null) "External app/browser" else "Playable in Mem",
+                )
+                DetailRow(
+                    "Thumbnail",
+                    if (memory.thumbnailUrl.isNullOrBlank()) "Not saved" else "Saved remote asset",
+                )
+            }
+        }
+
+        Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
+            PrimaryButton(
+                label = "Open source",
+                icon = Icons.Rounded.Link,
+                onClick = { onOpenMemory(memory) },
+                modifier = Modifier.weight(1f),
+            )
+            OutlinedButton(
+                onClick = { onAddToPlaylist(memory) },
+                modifier = Modifier.weight(1f),
+                shape = MemTokens.shapes.pill,
+            ) {
+                Icon(Icons.Rounded.Bookmarks, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
+                Text("Playlist")
+            }
+        }
+        OutlinedButton(
+            onClick = { onTagForReview(memory) },
+            modifier = Modifier.fillMaxWidth(),
+            shape = MemTokens.shapes.pill,
+        ) {
+            Icon(Icons.Rounded.Tag, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
+            Text("Tag for review")
+        }
+    }
+}
+
+@Composable
+private fun MetadataPill(label: String, icon: ImageVector, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        color = MemTokens.colors.surfaceMuted,
+        shape = MemTokens.shapes.pill,
+        border = BorderStroke(1.dp, MemTokens.colors.borderSubtle),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = MemTokens.spacing.sm, vertical = MemTokens.spacing.xs),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs),
+        ) {
+            Icon(icon, contentDescription = null, tint = MemTokens.colors.accent, modifier = Modifier.size(16.dp))
+            Text(label, color = MemTokens.colors.textSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun DetailRow(label: String, value: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.xxs)) {
+        Text(label, color = MemTokens.colors.textTertiary, fontSize = 12.sp)
+        SelectionContainer {
+            Text(value, color = MemTokens.colors.textSecondary, fontSize = 13.sp)
         }
     }
 }
@@ -1590,6 +1769,7 @@ private fun LibraryFeed(
     onAddToPlaylist: (MemoryUi) -> Unit,
     onTagForReview: (MemoryUi) -> Unit,
     onOpenMemory: (MemoryUi) -> Unit,
+    onOpenDetail: (MemoryUi) -> Unit,
 ) {
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
@@ -1601,13 +1781,18 @@ private fun LibraryFeed(
                 onAddToPlaylist = onAddToPlaylist,
                 onTagForReview = onTagForReview,
                 onOpenMemory = onOpenMemory,
+                onOpenDetail = onOpenDetail,
             )
         }
     }
 }
 
 @Composable
-private fun LibraryGrid(memories: List<MemoryUi>, onOpenMemory: (MemoryUi) -> Unit) {
+private fun LibraryGrid(
+    memories: List<MemoryUi>,
+    onOpenMemory: (MemoryUi) -> Unit,
+    onOpenDetail: (MemoryUi) -> Unit,
+) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         contentPadding = PaddingValues(bottom = 148.dp),
@@ -1615,19 +1800,23 @@ private fun LibraryGrid(memories: List<MemoryUi>, onOpenMemory: (MemoryUi) -> Un
         verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
     ) {
         items(memories) { memory ->
-            MemoryGridCard(memory, onOpenMemory)
+            MemoryGridCard(memory, onOpenMemory, onOpenDetail)
         }
     }
 }
 
 @Composable
-private fun LibraryTimeline(memories: List<MemoryUi>) {
+private fun LibraryTimeline(memories: List<MemoryUi>, onOpenDetail: (MemoryUi) -> Unit) {
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
         contentPadding = PaddingValues(bottom = 148.dp),
     ) {
         items(memories) { memory ->
-            TimelineRow(memory.time, memory.title, memory.summary, memory.icon)
+            SurfaceCard(
+                modifier = Modifier.clickable { onOpenDetail(memory) },
+            ) {
+                TimelineRow(memory.time, memory.title, memory.summary, memory.icon)
+            }
         }
     }
 }
@@ -1638,6 +1827,7 @@ private fun FeedItem(
     onAddToPlaylist: (MemoryUi) -> Unit,
     onTagForReview: (MemoryUi) -> Unit,
     onOpenMemory: (MemoryUi) -> Unit,
+    onOpenDetail: (MemoryUi) -> Unit,
 ) {
     SurfaceCard {
         Column(modifier = Modifier.padding(MemTokens.spacing.md), verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
@@ -1648,17 +1838,26 @@ private fun FeedItem(
                     onClick = { onOpenMemory(memory) },
                 )
                 Spacer(modifier = Modifier.width(MemTokens.spacing.sm))
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onOpenDetail(memory) },
+                ) {
                     Text(memory.type, color = MemTokens.colors.textSecondary, fontSize = 12.sp)
                     Text(memory.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
                 Text(memory.time, color = MemTokens.colors.textTertiary, fontSize = 12.sp)
             }
-            Text(memory.summary, color = MemTokens.colors.textSecondary, fontSize = 14.sp)
+            Text(
+                memory.summary,
+                color = MemTokens.colors.textSecondary,
+                fontSize = 14.sp,
+                modifier = Modifier.clickable { onOpenDetail(memory) },
+            )
             TagRow(memory.tags)
             DividerLine()
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                InlineAction("Ask", Icons.Rounded.AutoAwesome)
+                InlineAction("Details", Icons.AutoMirrored.Rounded.Article) { onOpenDetail(memory) }
                 InlineAction("Playlist", Icons.Rounded.Bookmarks) { onAddToPlaylist(memory) }
                 InlineAction("Tag", Icons.Rounded.Tag) { onTagForReview(memory) }
                 InlineAction("Archive", Icons.Rounded.Archive)
@@ -1668,7 +1867,11 @@ private fun FeedItem(
 }
 
 @Composable
-private fun MemoryGridCard(memory: MemoryUi, onOpenMemory: (MemoryUi) -> Unit) {
+private fun MemoryGridCard(
+    memory: MemoryUi,
+    onOpenMemory: (MemoryUi) -> Unit,
+    onOpenDetail: (MemoryUi) -> Unit,
+) {
     SurfaceCard {
         Column(modifier = Modifier.padding(MemTokens.spacing.md), verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
             Box(
@@ -1681,14 +1884,21 @@ private fun MemoryGridCard(memory: MemoryUi, onOpenMemory: (MemoryUi) -> Unit) {
             ) {
                 SourceVisual(memory, modifier = Modifier.fillMaxSize(), onClick = { onOpenMemory(memory) })
             }
-            Text(memory.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(memory.source, color = MemTokens.colors.textSecondary, fontSize = 12.sp, maxLines = 1)
+            Column(modifier = Modifier.clickable { onOpenDetail(memory) }) {
+                Text(memory.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(memory.source, color = MemTokens.colors.textSecondary, fontSize = 12.sp, maxLines = 1)
+            }
         }
     }
 }
 
 @Composable
-private fun SourceVisual(memory: MemoryUi, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+private fun SourceVisual(
+    memory: MemoryUi,
+    modifier: Modifier = Modifier,
+    iconSize: Dp = 28.dp,
+    onClick: (() -> Unit)? = null,
+) {
     val thumbnail = memory.thumbnailUrl
     val clickModifier = if (onClick == null) Modifier else Modifier.clickable(onClick = onClick)
     if (thumbnail.isNullOrBlank()) {
@@ -1699,7 +1909,7 @@ private fun SourceVisual(memory: MemoryUi, modifier: Modifier = Modifier, onClic
                 .background(MemTokens.colors.accentMuted),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(memory.icon, contentDescription = null, tint = MemTokens.colors.accent, modifier = Modifier.size(28.dp))
+            Icon(memory.icon, contentDescription = null, tint = MemTokens.colors.accent, modifier = Modifier.size(iconSize))
         }
     } else {
         AsyncImage(
