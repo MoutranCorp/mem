@@ -131,7 +131,8 @@ Immediate next steps:
    source summaries.
    Started with chunk-level FTS and cited search result cards in Library.
    Source detail now loads indexed chunks so transcript/article context is
-   inspectable from the memory itself.
+   inspectable from the memory itself. Timestamped citations now open source
+   detail at the cited time and seek local playback when media is playable.
 4. Add deterministic search filters and match explanations from the command
    field.
    Started with simple `type:`, `site:`, `domain:`, `status:`, and `has:`

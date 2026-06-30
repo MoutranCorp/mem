@@ -290,7 +290,8 @@ Exit criteria:
    Started with chunk-level FTS, simple filter token parsing, and cited result
    cards. The source detail sheet now loads indexed chunks for the selected
    source, and Library search includes a local agent panel with citation
-   summaries and a collection-draft action.
+   summaries and a collection-draft action. Timestamped citations now open
+   source detail at the cited time and seek playable local media.
 3. Add richer source-detail transcript/article layouts with jump targets.
 4. Add benchmark fixtures for saved videos, articles, notes, PDFs, and image
    memories.

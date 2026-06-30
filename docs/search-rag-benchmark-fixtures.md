@@ -23,6 +23,8 @@ Expected:
 - A transcript chunk appears in cited results.
 - The result includes a timestamp.
 - Opening the citation shows the indexed transcript context in source detail.
+- If the source has local playback, the detail player seeks to the cited
+  timestamp.
 
 ### Semantic Travel Planning
 

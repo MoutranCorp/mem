@@ -351,7 +351,11 @@ private class MemAppState(
         private set
     var selectedMemory by mutableStateOf<MemoryUi?>(null)
         private set
+    var selectedMemoryStartMs by mutableStateOf<Long?>(null)
+        private set
     var playingMemory by mutableStateOf<MemoryUi?>(null)
+        private set
+    var playingStartMs by mutableStateOf<Long?>(null)
         private set
     var authorizedSaveMemory by mutableStateOf<MemoryUi?>(null)
         private set
@@ -643,8 +647,14 @@ private class MemAppState(
         scope.launch {
             val deleted = withContext(Dispatchers.IO) { repository.deleteSource(memory.id) }
             if (deleted) {
-                if (selectedMemory?.id == memory.id) selectedMemory = null
-                if (playingMemory?.id == memory.id) playingMemory = null
+                if (selectedMemory?.id == memory.id) {
+                    selectedMemory = null
+                    selectedMemoryStartMs = null
+                }
+                if (playingMemory?.id == memory.id) {
+                    playingMemory = null
+                    playingStartMs = null
+                }
                 logOutput = "Deleted ${memory.title}."
                 Toast.makeText(context, "Deleted memory", Toast.LENGTH_SHORT).show()
             } else {
@@ -705,6 +715,7 @@ private class MemAppState(
 
     fun openSourceDetail(memory: MemoryUi) {
         selectedMemory = memory
+        selectedMemoryStartMs = null
         selectedMemoryChunks.clear()
         scope.launch {
             val chunks = withContext(Dispatchers.IO) { repository.chunksForSource(memory.id) }
@@ -718,7 +729,7 @@ private class MemAppState(
     fun openSearchResult(result: SearchResultUi) {
         val existing = memories.firstOrNull { it.id == result.sourceId }
         if (existing != null) {
-            openSourceDetail(existing)
+            openSourceDetail(existing, result.startTimeMs)
             return
         }
         scope.launch {
@@ -727,17 +738,27 @@ private class MemAppState(
                 logOutput = "Could not load source for citation ${result.chunkId}."
                 return@launch
             }
-            openSourceDetail(snapshot.toMemoryUi())
+            openSourceDetail(snapshot.toMemoryUi(), result.startTimeMs)
+        }
+    }
+
+    private fun openSourceDetail(memory: MemoryUi, startTimeMs: Long?) {
+        openSourceDetail(memory)
+        selectedMemoryStartMs = startTimeMs
+        if (startTimeMs != null) {
+            logOutput = "Opened ${memory.title} at ${startTimeMs.timestampLabel()}."
         }
     }
 
     fun closeSourceDetail() {
         selectedMemory = null
+        selectedMemoryStartMs = null
         selectedMemoryChunks.clear()
     }
 
     fun closePlayer() {
         playingMemory = null
+        playingStartMs = null
     }
 
     fun retryMemoryExtraction(memory: MemoryUi) {
@@ -857,7 +878,9 @@ private class MemAppState(
     fun openMemory(memory: MemoryUi) {
         if (memory.localPlaybackPath != null) {
             playingMemory = memory
+            playingStartMs = if (selectedMemory?.id == memory.id) selectedMemoryStartMs else null
             selectedMemory = null
+            selectedMemoryStartMs = null
             return
         }
         val url = memory.openUrl
@@ -1727,6 +1750,7 @@ private data class SearchResultUi(
     val snippet: String,
     val matchReason: String,
     val chunkType: String,
+    val startTimeMs: Long?,
     val startTimeLabel: String?,
     val retrievalMode: String,
     val rankLabel: String,
@@ -1750,6 +1774,7 @@ private fun SearchResultData.toSearchResultUi(): SearchResultUi {
         snippet = snippet,
         matchReason = matchReason,
         chunkType = chunkType,
+        startTimeMs = startTimeMs,
         startTimeLabel = startTimeMs?.timestampLabel(),
         retrievalMode = retrievalMode,
         rankLabel = "%.2f".format(rankScore),
@@ -2175,6 +2200,7 @@ private fun MemScaffold(state: MemAppState) {
             SourceDetailSheet(
                 memory = memory,
                 chunks = state.selectedMemoryChunks,
+                citationStartMs = state.selectedMemoryStartMs,
                 seekBackSeconds = state.appearance.seekBackSeconds,
                 seekForwardSeconds = state.appearance.seekForwardSeconds,
                 onDismiss = state::closeSourceDetail,
@@ -2201,6 +2227,7 @@ private fun MemScaffold(state: MemAppState) {
     state.playingMemory?.let { memory ->
         FullscreenPlayerScreen(
             memory = memory,
+            startPositionMs = state.playingStartMs,
             seekBackSeconds = state.appearance.seekBackSeconds,
             seekForwardSeconds = state.appearance.seekForwardSeconds,
             onClose = state::closePlayer,
@@ -2935,6 +2962,7 @@ private fun PlaybackStepSetting(label: String, value: Int, onChange: (Int) -> Un
 private fun SourceDetailSheet(
     memory: MemoryUi,
     chunks: List<ContentChunkUi>,
+    citationStartMs: Long?,
     seekBackSeconds: Int,
     seekForwardSeconds: Int,
     onDismiss: () -> Unit,
@@ -2973,6 +3001,7 @@ private fun SourceDetailSheet(
         if (memory.localPlaybackPath != null) {
             LocalVideoPlayer(
                 path = memory.localPlaybackPath,
+                startPositionMs = citationStartMs,
                 seekBackSeconds = seekBackSeconds,
                 seekForwardSeconds = seekForwardSeconds,
                 controlsInitiallyVisible = true,
@@ -2991,6 +3020,24 @@ private fun SourceDetailSheet(
                 iconSize = 58.dp,
                 onClick = { onOpenMemory(memory) },
             )
+        }
+
+        citationStartMs?.let { startMs ->
+            SurfaceCard(container = MemTokens.colors.accentMuted, border = null) {
+                Row(
+                    modifier = Modifier.padding(MemTokens.spacing.md),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
+                ) {
+                    Icon(Icons.Rounded.PlayCircle, contentDescription = null, tint = MemTokens.colors.accent)
+                    Text(
+                        "Opened citation at ${startMs.timestampLabel()}",
+                        color = MemTokens.colors.textPrimary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
@@ -3366,6 +3413,7 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
 @Composable
 private fun FullscreenPlayerScreen(
     memory: MemoryUi,
+    startPositionMs: Long?,
     seekBackSeconds: Int,
     seekForwardSeconds: Int,
     onClose: () -> Unit,
@@ -3395,6 +3443,7 @@ private fun FullscreenPlayerScreen(
                 LocalVideoPlayer(
                     path = path,
                     autoPlay = true,
+                    startPositionMs = startPositionMs,
                     seekBackSeconds = seekBackSeconds,
                     seekForwardSeconds = seekForwardSeconds,
                     controlsInitiallyVisible = true,
@@ -3532,6 +3581,7 @@ private fun LocalVideoPlayer(
     path: String,
     modifier: Modifier = Modifier,
     autoPlay: Boolean = false,
+    startPositionMs: Long? = null,
     seekBackSeconds: Int = 10,
     seekForwardSeconds: Int = 30,
     controlsInitiallyVisible: Boolean = false,
@@ -3551,6 +3601,9 @@ private fun LocalVideoPlayer(
             playWhenReady = autoPlay
             prepare()
         }
+    }
+    LaunchedEffect(player, startPositionMs) {
+        startPositionMs?.takeIf { it > 0L }?.let { player.seekTo(it) }
     }
     LaunchedEffect(player, autoPlay) {
         player.playWhenReady = autoPlay
