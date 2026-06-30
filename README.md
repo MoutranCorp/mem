@@ -28,6 +28,10 @@ model used by `mobile-agent`.
 - Library feed can add a source to `Saved playlist` and tag it for review.
 - Durable asset table for thumbnails/files, with extracted thumbnails rendered
   in recent sources, feed, and grid where available.
+- Library collections/playlists live in their own Library mode instead of a
+  large widget above Feed/Grid/Timeline.
+- Clicking non-downloaded source thumbnails opens the original source URL in the
+  matching external app/browser when available.
 
 The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and
@@ -70,9 +74,10 @@ The production direction is documented in:
 
 Immediate next steps:
 
-1. Add local thumbnail/file caching for durable assets.
-2. Build collection detail screens and richer tag editing.
-3. Expand FTS indexing to transcript/caption chunks and richer ranking.
+1. Add in-app local media playback for downloaded/authorized video assets.
+2. Add local thumbnail/file caching for durable assets.
+3. Build collection detail screens and richer tag editing.
+4. Expand FTS indexing to transcript/caption chunks and richer ranking.
 4. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
    libs and pass their paths to `yt-dlp` through `ffmpeg_location`.
 5. Move long downloads to user-initiated data transfer jobs and media processing

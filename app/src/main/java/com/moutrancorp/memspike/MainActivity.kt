@@ -5,6 +5,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -192,6 +193,7 @@ private enum class LibraryMode(val label: String, val icon: ImageVector) {
     Feed("Feed", Icons.Rounded.ViewAgenda),
     Grid("Grid", Icons.Rounded.GridView),
     Timeline("Timeline", Icons.Rounded.Timeline),
+    Collections("Collections", Icons.Rounded.Bookmarks),
 }
 
 private enum class ThemeProfile(val label: String) {
@@ -390,6 +392,23 @@ private class MemAppState(
         }
     }
 
+    fun openMemory(memory: MemoryUi) {
+        if (memory.localPlaybackPath != null) {
+            logOutput = "In-app playback is reserved for downloaded media. Local player UI comes with the offline-save slice."
+            return
+        }
+        val url = memory.openUrl
+        if (url.isNullOrBlank()) {
+            logOutput = "No source URL is available for ${memory.title}."
+            return
+        }
+        runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure {
+            logOutput = "Could not open source: ${it.message}"
+        }
+    }
+
     private fun applyMemoryState(state: MemoryState) {
         val sourceById = state.sources.associateBy { it.id }
         val thumbnailBySource = state.assets
@@ -559,6 +578,8 @@ private data class MemoryUi(
     val time: String,
     val icon: ImageVector,
     val thumbnailUrl: String?,
+    val openUrl: String?,
+    val localPlaybackPath: String?,
     val tags: List<String>,
 )
 
@@ -587,6 +608,8 @@ private fun SourceEntity.toMemoryUi(thumbnailAsset: AssetEntity?): MemoryUi {
         time = savedAt.relativeTime(),
         icon = sourceIcon(sourceType, processingState),
         thumbnailUrl = thumbnailAsset?.remoteUrl ?: thumbnailUrl,
+        openUrl = originalUrl,
+        localPlaybackPath = null,
         tags = buildList {
             add(processingState)
             if (authState == "needs_auth") add("needs auth")
@@ -964,7 +987,7 @@ private fun MemHomeScreen(state: MemAppState) {
         item {
             SectionHeader("Recent sources", "View all") { state.selectedTab = MainTab.Library }
             Spacer(modifier = Modifier.height(MemTokens.spacing.sm))
-            RecentSourcesRow(state.memories.take(8))
+            RecentSourcesRow(state.memories.take(8), onOpenMemory = state::openMemory)
         }
         item {
             TodayTimelinePanel()
@@ -1036,10 +1059,6 @@ private fun LibraryScreen(state: MemAppState) {
             subtitle = "Everything you have saved",
             onAppearance = { state.showAppearance = true },
         )
-        if (state.collections.isNotEmpty()) {
-            Spacer(modifier = Modifier.height(MemTokens.spacing.md))
-            CollectionStrip(state.collections)
-        }
         Spacer(modifier = Modifier.height(MemTokens.spacing.md))
         ModeSegmentedControl(
             selected = state.appearance.libraryMode,
@@ -1064,9 +1083,11 @@ private fun LibraryScreen(state: MemAppState) {
                 memories = state.memories,
                 onAddToPlaylist = state::addToPlaylist,
                 onTagForReview = state::tagForReview,
+                onOpenMemory = state::openMemory,
             )
-            LibraryMode.Grid -> LibraryGrid(state.memories)
+            LibraryMode.Grid -> LibraryGrid(state.memories, onOpenMemory = state::openMemory)
             LibraryMode.Timeline -> LibraryTimeline(state.memories)
+            LibraryMode.Collections -> LibraryCollections(state.collections)
         }
     }
 }
@@ -1203,7 +1224,7 @@ private fun ContextMetric(value: String, label: String, icon: ImageVector, modif
 }
 
 @Composable
-private fun RecentSourcesRow(memories: List<MemoryUi>) {
+private fun RecentSourcesRow(memories: List<MemoryUi>, onOpenMemory: (MemoryUi) -> Unit) {
     LazyRow(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
         items(memories) { memory ->
             SurfaceCard(modifier = Modifier.width(156.dp)) {
@@ -1211,7 +1232,7 @@ private fun RecentSourcesRow(memories: List<MemoryUi>) {
                     modifier = Modifier.padding(MemTokens.spacing.md),
                     verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
                 ) {
-                    SourceVisual(memory, modifier = Modifier.size(48.dp))
+                    SourceVisual(memory, modifier = Modifier.size(48.dp), onClick = { onOpenMemory(memory) })
                     Text(
                         memory.title,
                         color = MemTokens.colors.textPrimary,
@@ -1503,17 +1524,38 @@ private fun SmallActionButton(label: String, icon: ImageVector, onClick: () -> U
 
 
 @Composable
-private fun CollectionStrip(collections: List<CollectionUi>) {
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
+private fun LibraryCollections(collections: List<CollectionUi>) {
+    if (collections.isEmpty()) {
+        SurfaceCard {
+            Column(
+                modifier = Modifier.padding(MemTokens.spacing.lg),
+                verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
+            ) {
+                IconBadge(Icons.Rounded.Bookmarks, MemTokens.colors.accentMuted, MemTokens.colors.accent)
+                Text("No collections yet", color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
+                Text("Use Playlist on any feed item to create your first saved playlist.", color = MemTokens.colors.textSecondary, fontSize = 14.sp)
+            }
+        }
+        return
+    }
+    LazyColumn(
+        verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
+        contentPadding = PaddingValues(bottom = 148.dp),
+    ) {
         items(collections, key = { it.id }) { collection ->
-            SurfaceCard(modifier = Modifier.width(168.dp)) {
-                Column(
-                    modifier = Modifier.padding(MemTokens.spacing.md),
-                    verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs),
+            SurfaceCard {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(MemTokens.spacing.md),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
                     IconBadge(Icons.Rounded.Bookmarks, MemTokens.colors.accentMuted, MemTokens.colors.accent)
-                    Text(collection.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                    Text("${collection.itemCount} item${if (collection.itemCount == 1) "" else "s"}", color = MemTokens.colors.textSecondary, fontSize = 12.sp)
+                    Spacer(modifier = Modifier.width(MemTokens.spacing.sm))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(collection.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        Text("${collection.itemCount} item${if (collection.itemCount == 1) "" else "s"} - ${collection.type}", color = MemTokens.colors.textSecondary, fontSize = 13.sp)
+                    }
                 }
             }
         }
@@ -1525,6 +1567,7 @@ private fun LibraryFeed(
     memories: List<MemoryUi>,
     onAddToPlaylist: (MemoryUi) -> Unit,
     onTagForReview: (MemoryUi) -> Unit,
+    onOpenMemory: (MemoryUi) -> Unit,
 ) {
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
@@ -1535,13 +1578,14 @@ private fun LibraryFeed(
                 memory = memory,
                 onAddToPlaylist = onAddToPlaylist,
                 onTagForReview = onTagForReview,
+                onOpenMemory = onOpenMemory,
             )
         }
     }
 }
 
 @Composable
-private fun LibraryGrid(memories: List<MemoryUi>) {
+private fun LibraryGrid(memories: List<MemoryUi>, onOpenMemory: (MemoryUi) -> Unit) {
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
         contentPadding = PaddingValues(bottom = 148.dp),
@@ -1549,7 +1593,7 @@ private fun LibraryGrid(memories: List<MemoryUi>) {
         verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
     ) {
         items(memories) { memory ->
-            MemoryGridCard(memory)
+            MemoryGridCard(memory, onOpenMemory)
         }
     }
 }
@@ -1571,11 +1615,16 @@ private fun FeedItem(
     memory: MemoryUi,
     onAddToPlaylist: (MemoryUi) -> Unit,
     onTagForReview: (MemoryUi) -> Unit,
+    onOpenMemory: (MemoryUi) -> Unit,
 ) {
     SurfaceCard {
         Column(modifier = Modifier.padding(MemTokens.spacing.md), verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                SourceVisual(memory, modifier = Modifier.size(64.dp))
+                SourceVisual(
+                    memory = memory,
+                    modifier = Modifier.size(64.dp),
+                    onClick = { onOpenMemory(memory) },
+                )
                 Spacer(modifier = Modifier.width(MemTokens.spacing.sm))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(memory.type, color = MemTokens.colors.textSecondary, fontSize = 12.sp)
@@ -1597,7 +1646,7 @@ private fun FeedItem(
 }
 
 @Composable
-private fun MemoryGridCard(memory: MemoryUi) {
+private fun MemoryGridCard(memory: MemoryUi, onOpenMemory: (MemoryUi) -> Unit) {
     SurfaceCard {
         Column(modifier = Modifier.padding(MemTokens.spacing.md), verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
             Box(
@@ -1608,7 +1657,7 @@ private fun MemoryGridCard(memory: MemoryUi) {
                     .background(MemTokens.colors.accentMuted),
                 contentAlignment = Alignment.Center,
             ) {
-                SourceVisual(memory, modifier = Modifier.fillMaxSize())
+                SourceVisual(memory, modifier = Modifier.fillMaxSize(), onClick = { onOpenMemory(memory) })
             }
             Text(memory.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(memory.source, color = MemTokens.colors.textSecondary, fontSize = 12.sp, maxLines = 1)
@@ -1617,11 +1666,13 @@ private fun MemoryGridCard(memory: MemoryUi) {
 }
 
 @Composable
-private fun SourceVisual(memory: MemoryUi, modifier: Modifier = Modifier) {
+private fun SourceVisual(memory: MemoryUi, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
     val thumbnail = memory.thumbnailUrl
+    val clickModifier = if (onClick == null) Modifier else Modifier.clickable(onClick = onClick)
     if (thumbnail.isNullOrBlank()) {
         Box(
             modifier = modifier
+                .then(clickModifier)
                 .clip(MemTokens.shapes.md)
                 .background(MemTokens.colors.accentMuted),
             contentAlignment = Alignment.Center,
@@ -1637,6 +1688,7 @@ private fun SourceVisual(memory: MemoryUi, modifier: Modifier = Modifier) {
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = modifier
+                .then(clickModifier)
                 .clip(MemTokens.shapes.md)
                 .background(MemTokens.colors.surfaceMuted),
         )
@@ -1895,6 +1947,8 @@ private fun sampleMemories() = listOf(
         "2h ago",
         Icons.Rounded.SmartDisplay,
         null,
+        "https://www.youtube.com/",
+        null,
         listOf("habits", "productivity", "mindset"),
     ),
     MemoryUi(
@@ -1905,6 +1959,8 @@ private fun sampleMemories() = listOf(
         "A saved essay about consciousness, otherness, and the limits of understanding.",
         "5h ago",
         Icons.AutoMirrored.Rounded.MenuBook,
+        null,
+        "https://en.wikipedia.org/wiki/Solaris_(novel)",
         null,
         listOf("philosophy", "science fiction"),
     ),
@@ -1917,6 +1973,8 @@ private fun sampleMemories() = listOf(
         "1d ago",
         Icons.AutoMirrored.Rounded.Article,
         null,
+        null,
+        null,
         listOf("reflection", "goals"),
     ),
     MemoryUi(
@@ -1928,6 +1986,8 @@ private fun sampleMemories() = listOf(
         "1d ago",
         Icons.Rounded.Bookmarks,
         null,
+        null,
+        null,
         listOf("travel", "portugal"),
     ),
     MemoryUi(
@@ -1938,6 +1998,8 @@ private fun sampleMemories() = listOf(
         "Key insight on empathy in design and observing behavior before asking questions.",
         "2d ago",
         Icons.Rounded.Waves,
+        null,
+        null,
         null,
         listOf("design", "empathy"),
     ),
