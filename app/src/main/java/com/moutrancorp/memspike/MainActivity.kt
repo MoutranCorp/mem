@@ -585,6 +585,14 @@ private class MemAppState(
         }
     }
 
+    fun clearInstagramAuth() {
+        scope.launch {
+            val domain = withContext(Dispatchers.IO) { repository.clearAuthSessionForDomain("instagram.com") }
+            logOutput = "Cleared saved auth for $domain. Share or paste an Instagram link to test login again."
+            Toast.makeText(context, "Cleared Instagram auth", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     fun openInstagramConnection(memory: MemoryUi) {
         val input = memory.openUrl
         if (input.isNullOrBlank() || authDomain(input) != "instagram.com") {
@@ -2106,6 +2114,17 @@ private fun AppearanceSheet(state: MemAppState) {
         SettingsGroup("Dock") {
             EnumOptions(DockStyle.entries, state.appearance.dockStyle) {
                 state.updateAppearance(state.appearance.copy(dockStyle = it))
+            }
+        }
+        SettingsGroup("Auth") {
+            OutlinedButton(
+                onClick = state::clearInstagramAuth,
+                modifier = Modifier.fillMaxWidth(),
+                shape = MemTokens.shapes.pill,
+            ) {
+                Icon(Icons.Rounded.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
+                Text("Clear Instagram auth")
             }
         }
     }

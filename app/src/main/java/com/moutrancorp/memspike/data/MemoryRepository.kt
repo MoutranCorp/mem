@@ -266,6 +266,11 @@ class MemoryRepository(private val database: MemDatabase) {
 
     suspend fun clearAuthSessionForInput(input: String): String? {
         val domain = authDomain(input) ?: return null
+        clearAuthSessionForDomain(domain)
+        return domain
+    }
+
+    suspend fun clearAuthSessionForDomain(domain: String): String {
         val existing = database.authSessionDao().findByDomain(domain)
         database.authSessionDao().deleteByDomain(domain)
         existing?.cookieFilePath

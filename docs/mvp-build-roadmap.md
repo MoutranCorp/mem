@@ -123,7 +123,8 @@ store it in an `auth_sessions` record, and retry extraction with `yt-dlp`
 login WebView, save the resulting session into the same auth session store, and
 retry extraction without asking the user to manually export cookies. The source
 detail auth callout can also clear the saved domain auth session for retesting
-or account switching.
+or account switching, and the always-reachable settings sheet can clear
+Instagram auth when the current session is already working.
 
 Deliverables:
 
