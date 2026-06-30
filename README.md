@@ -143,7 +143,9 @@ Immediate next steps:
    status, transcript/visual/timestamp capabilities, negative terms,
    `duration:` ranges, `saved:`/`date:` ranges, `tag:`, and `collection:`,
    `author:`/`channel:`, and `language:`, then shows rank signals on cited
-   result cards. Filter-only queries can seed retrieval without a keyword term.
+   result cards. `has:local_video` and `has:thumbnail` are enforced from
+   durable asset roles. Filter-only queries can seed retrieval without a
+   keyword term.
 5. Add an embedding/index interface so every extracted record can become a RAG
    document with stable IDs, source URL, timestamp, title, tags, and transcript
    segments.

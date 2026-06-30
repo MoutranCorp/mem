@@ -83,6 +83,8 @@ Queries:
 - `collection:japan trip planning`
 - `author:travel japan transit`
 - `language:en has:transcript`
+- `has:local_video`
+- `has:thumbnail type:video`
 - `"exact phrase" -ignored`
 
 Expected:
@@ -94,6 +96,8 @@ Expected:
   treated as ordinary text hints.
 - Author/channel and language filters should remove nonmatching authors and
   chunks without the requested language.
+- Asset-backed capability filters should remove sources that do not have the
+  required durable asset role.
 - Quoted phrases remain searchable as meaningful terms.
 - Cited result cards expose rank signals for debugging keyword, semantic,
   recency, filter, and hybrid behavior.

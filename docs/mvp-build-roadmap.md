@@ -298,7 +298,9 @@ Exit criteria:
    playback to their indexed moment. Tag and collection membership filters are
    now enforced as hard filters through `tag:` and `collection:`. Author,
    channel, and chunk-language filters are enforced through `author:`,
-   `channel:`, and `language:`.
+   `channel:`, and `language:`. Local playback and thumbnail capability filters
+   are enforced from durable asset roles through `has:local_video` and
+   `has:thumbnail`.
 3. Add richer source-detail transcript/article layouts with jump targets.
 4. Add benchmark fixtures for saved videos, articles, notes, PDFs, and image
    memories. Started with `tools/search_rag_eval.py` and

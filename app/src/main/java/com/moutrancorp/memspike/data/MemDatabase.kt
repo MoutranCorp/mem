@@ -521,6 +521,16 @@ interface AssetDao {
     @Query("SELECT COUNT(*) FROM assets WHERE role = :role")
     suspend fun countByRole(role: String): Int
 
+    @Query(
+        """
+        SELECT sourceId FROM assets
+        WHERE role IN (:roles)
+        GROUP BY sourceId
+        HAVING COUNT(DISTINCT role) = :roleCount
+        """,
+    )
+    suspend fun sourceIdsWithAllRoles(roles: List<String>, roleCount: Int): List<String>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(asset: AssetEntity)
 }

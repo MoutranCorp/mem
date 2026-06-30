@@ -33,6 +33,7 @@ class Chunk:
     saved_at: int
     tags: frozenset[str]
     collections: frozenset[str]
+    asset_roles: frozenset[str]
     chunk_type: str
     language: str | None
     text: str
@@ -52,6 +53,7 @@ class ParsedQuery:
     collection_filters: set[str]
     author_filters: set[str]
     language_filters: set[str]
+    required_asset_roles: set[str]
     required_chunk_types: set[str]
     required_capabilities: set[str]
     duration_ranges: list[range]
@@ -68,6 +70,7 @@ class ParsedQuery:
                 self.collection_filters,
                 self.author_filters,
                 self.language_filters,
+                self.required_asset_roles,
                 self.required_chunk_types,
                 self.required_capabilities,
                 self.duration_ranges,
@@ -171,6 +174,7 @@ def parse_query(query: str) -> ParsedQuery:
     collection_filters: set[str] = set()
     author_filters: set[str] = set()
     language_filters: set[str] = set()
+    required_asset_roles: set[str] = set()
     required_chunk_types: set[str] = set()
     required_capabilities: set[str] = set()
     duration_ranges: list[range] = []
@@ -202,6 +206,10 @@ def parse_query(query: str) -> ParsedQuery:
                 required_chunk_types.add("transcript")
             elif value == "visual":
                 required_chunk_types.add("visual")
+            elif value == "local_video":
+                required_asset_roles.add("playback")
+            elif value == "thumbnail":
+                required_asset_roles.add("thumbnail")
             elif value == "timestamp":
                 required_capabilities.add("timestamp")
             elif value == "auth":
@@ -245,6 +253,7 @@ def parse_query(query: str) -> ParsedQuery:
         collection_filters={item for item in collection_filters if item},
         author_filters={item for item in author_filters if item},
         language_filters={item for item in language_filters if item},
+        required_asset_roles={item for item in required_asset_roles if item},
         required_chunk_types=required_chunk_types,
         required_capabilities=required_capabilities,
         duration_ranges=duration_ranges,
@@ -375,6 +384,7 @@ def haystack(chunk: Chunk, mode: str = "") -> str:
             chunk.author or "",
             " ".join(sorted(chunk.tags)),
             " ".join(sorted(chunk.collections)),
+            " ".join(sorted(chunk.asset_roles)),
             chunk.language or "",
             chunk.text,
             chunk.chunk_type,
@@ -405,6 +415,8 @@ def matches(parsed: ParsedQuery, chunk: Chunk, mode: str = "") -> bool:
         if not author or not any(item in author for item in parsed.author_filters):
             return False
     if parsed.language_filters and (chunk.language or "").lower() not in parsed.language_filters:
+        return False
+    if parsed.required_asset_roles and not parsed.required_asset_roles.issubset(chunk.asset_roles):
         return False
     if parsed.required_chunk_types and chunk.chunk_type.lower() not in parsed.required_chunk_types:
         return False
@@ -439,6 +451,8 @@ def rank_boost(parsed: ParsedQuery, result: Result) -> float:
         boost += 0.18
     if parsed.language_filters and (result.chunk.language or "").lower() in parsed.language_filters:
         boost += 0.18
+    if parsed.required_asset_roles and parsed.required_asset_roles.issubset(result.chunk.asset_roles):
+        boost += 0.2
     if parsed.duration_ranges and result.chunk.duration_seconds is not None:
         boost += 0.18
     if parsed.saved_ranges or parsed.date_ranges:
@@ -546,6 +560,7 @@ def load_fixture(path: Path) -> tuple[list[Chunk], list[dict[str, Any]]]:
                 saved_at=parse_fixture_time(source["savedAt"]),
                 tags=frozenset(source.get("tags", [])),
                 collections=frozenset(item.lower() for item in source.get("collections", [])),
+                asset_roles=frozenset(source.get("assetRoles", [])),
                 chunk_type=raw["chunkType"],
                 language=raw.get("language"),
                 text=raw["text"],

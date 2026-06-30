@@ -187,7 +187,18 @@ class MemoryRepository(private val database: MemDatabase) {
                 .sourceIdsInAllCollections(parsed.collectionFilters.toList(), parsed.collectionFilters.size)
                 .toSet()
         }
-        return SearchFilterContext(tagSourceIds = tagSourceIds, collectionSourceIds = collectionSourceIds)
+        val assetSourceIds = if (parsed.requiredAssetRoles.isEmpty()) {
+            null
+        } else {
+            database.assetDao()
+                .sourceIdsWithAllRoles(parsed.requiredAssetRoles.toList(), parsed.requiredAssetRoles.size)
+                .toSet()
+        }
+        return SearchFilterContext(
+            tagSourceIds = tagSourceIds,
+            collectionSourceIds = collectionSourceIds,
+            assetSourceIds = assetSourceIds,
+        )
     }
 
     private fun fuseSearchResults(
@@ -1549,6 +1560,7 @@ private data class ParsedSearchQuery(
     val collectionFilters: Set<String>,
     val authorFilters: Set<String>,
     val languageFilters: Set<String>,
+    val requiredAssetRoles: Set<String>,
     val requiredChunkTypes: Set<String>,
     val requiredCapabilities: Set<String>,
     val durationRanges: List<LongRange>,
@@ -1566,6 +1578,7 @@ private data class ParsedSearchQuery(
         if (statuses.isNotEmpty() && statuses.none { haystack.contains(it) }) return false
         filterContext.tagSourceIds?.let { if (result.sourceId !in it) return false }
         filterContext.collectionSourceIds?.let { if (result.sourceId !in it) return false }
+        filterContext.assetSourceIds?.let { if (result.sourceId !in it) return false }
         if (authorFilters.isNotEmpty()) {
             val author = result.author?.lowercase(Locale.US) ?: return false
             if (authorFilters.none { author.contains(it) }) return false
@@ -1593,6 +1606,7 @@ private data class ParsedSearchQuery(
             collectionFilters.isNotEmpty() ||
             authorFilters.isNotEmpty() ||
             languageFilters.isNotEmpty() ||
+            requiredAssetRoles.isNotEmpty() ||
             requiredChunkTypes.isNotEmpty() ||
             requiredCapabilities.isNotEmpty() ||
             durationRanges.isNotEmpty() ||
@@ -1610,6 +1624,7 @@ private data class ParsedSearchQuery(
         if (domains.any { result.originDomain?.lowercase(Locale.US)?.contains(it) == true }) boost += 0.25f
         if (filterContext.tagSourceIds?.contains(result.sourceId) == true) boost += 0.22f
         if (filterContext.collectionSourceIds?.contains(result.sourceId) == true) boost += 0.22f
+        if (filterContext.assetSourceIds?.contains(result.sourceId) == true) boost += 0.2f
         if (authorFilters.any { result.author?.lowercase(Locale.US)?.contains(it) == true }) boost += 0.18f
         if (languageFilters.contains(result.language?.lowercase(Locale.US))) boost += 0.18f
         if (durationRanges.isNotEmpty() && result.durationSeconds != null) boost += 0.18f
@@ -1632,8 +1647,10 @@ private data class ParsedSearchQuery(
             .put("collectionFilters", JSONArray(collectionFilters.toList()))
             .put("authorFilters", JSONArray(authorFilters.toList()))
             .put("languageFilters", JSONArray(languageFilters.toList()))
+            .put("requiredAssetRoles", JSONArray(requiredAssetRoles.toList()))
             .put("tagFilterMatches", filterContext.tagSourceIds?.size ?: 0)
             .put("collectionFilterMatches", filterContext.collectionSourceIds?.size ?: 0)
+            .put("assetFilterMatches", filterContext.assetSourceIds?.size ?: 0)
             .put("requiredChunkTypes", JSONArray(requiredChunkTypes.toList()))
             .put("requiredCapabilities", JSONArray(requiredCapabilities.toList()))
             .put("durationRanges", JSONArray(durationRanges.map { "${it.first}..${it.last}" }))
@@ -1646,6 +1663,7 @@ private data class ParsedSearchQuery(
 private data class SearchFilterContext(
     val tagSourceIds: Set<String>?,
     val collectionSourceIds: Set<String>?,
+    val assetSourceIds: Set<String>?,
 )
 
 private fun parseSearchQuery(query: String): ParsedSearchQuery {
@@ -1659,6 +1677,7 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
     val collectionFilters = mutableSetOf<String>()
     val authorFilters = mutableSetOf<String>()
     val languageFilters = mutableSetOf<String>()
+    val requiredAssetRoles = mutableSetOf<String>()
     val requiredChunkTypes = mutableSetOf<String>()
     val requiredCapabilities = mutableSetOf<String>()
     val durationRanges = mutableListOf<LongRange>()
@@ -1690,7 +1709,8 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
                     "has" -> when (value) {
                         "transcript" -> requiredChunkTypes.add("transcript")
                         "visual" -> requiredChunkTypes.add("visual")
-                        "local_video" -> softTerms.add("playable")
+                        "local_video" -> requiredAssetRoles.add("playback")
+                        "thumbnail" -> requiredAssetRoles.add("thumbnail")
                         "timestamp" -> requiredCapabilities.add("timestamp")
                         "auth" -> statuses.add("needs_auth")
                         else -> softTerms.add(value)
@@ -1721,6 +1741,7 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
         collectionFilters = collectionFilters.filter { it.isNotBlank() }.toSet(),
         authorFilters = authorFilters.filter { it.isNotBlank() }.toSet(),
         languageFilters = languageFilters.filter { it.isNotBlank() }.toSet(),
+        requiredAssetRoles = requiredAssetRoles.filter { it.isNotBlank() }.toSet(),
         requiredChunkTypes = requiredChunkTypes,
         requiredCapabilities = requiredCapabilities,
         durationRanges = durationRanges,

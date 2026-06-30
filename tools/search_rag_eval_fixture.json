@@ -7,7 +7,8 @@
       "originDomain": "youtube.com",
       "author": "Startup Lab",
       "durationSeconds": 780,
-      "savedAt": "2026-06-20T12:00:00Z"
+      "savedAt": "2026-06-20T12:00:00Z",
+      "assetRoles": ["thumbnail"]
     },
     {
       "id": "yt_japan_food_short",
@@ -18,7 +19,8 @@
       "durationSeconds": 240,
       "savedAt": "2026-06-25T12:00:00Z",
       "tags": ["travel", "japan"],
-      "collections": ["japan"]
+      "collections": ["japan"],
+      "assetRoles": ["thumbnail"]
     },
     {
       "id": "article_kyoto_hotels",
@@ -69,7 +71,8 @@
       "originDomain": null,
       "author": null,
       "durationSeconds": 45,
-      "savedAt": "2026-06-29T18:00:00Z"
+      "savedAt": "2026-06-29T18:00:00Z",
+      "assetRoles": ["playback", "thumbnail"]
     },
     {
       "id": "article_ignored_exact",
@@ -224,6 +227,20 @@
       "expectedAnySourceIds": ["yt_founder_distribution", "yt_japan_food_short", "local_gameplay_visual"],
       "requiredChunkTypes": ["transcript"],
       "requiresTimestamp": true,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Local video asset filter",
+      "query": "has:local_video",
+      "expectedTopSourceId": "local_gameplay_visual",
+      "allResultsSourceType": "video",
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Thumbnail asset filter",
+      "query": "has:thumbnail type:video",
+      "expectedAnySourceIds": ["yt_founder_distribution", "yt_japan_food_short", "local_gameplay_visual"],
+      "allResultsSourceType": "video",
       "requiresRankSignals": true
     },
     {
