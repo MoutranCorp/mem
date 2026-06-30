@@ -56,6 +56,8 @@ model used by `mobile-agent`.
   store it as an auth session, and retry `yt-dlp` with that cookie file.
 - Instagram `needs_auth` source detail can open a dedicated login WebView,
   save the resulting session into the auth session store, and retry extraction.
+- Auth-required source detail can clear the saved domain auth session so cookie
+  import and WebView login paths can be retested.
 
 The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and

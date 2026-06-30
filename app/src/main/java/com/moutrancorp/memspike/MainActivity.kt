@@ -66,6 +66,7 @@ import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DarkMode
+import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.GridView
@@ -565,6 +566,22 @@ private class MemAppState(
             isExtracting = false
             logOutput = "Imported cookies for $domain. Retrying extraction..."
             extract(input)
+        }
+    }
+
+    fun clearAuthForMemory(memory: MemoryUi) {
+        val input = memory.openUrl
+        if (input.isNullOrBlank()) {
+            logOutput = "No source URL is available for ${memory.title}."
+            return
+        }
+        scope.launch {
+            val domain = withContext(Dispatchers.IO) { repository.clearAuthSessionForInput(input) }
+            logOutput = if (domain == null) {
+                "No supported auth domain is available for ${memory.title}."
+            } else {
+                "Cleared saved auth for $domain. Retry extraction or connect again."
+            }
         }
     }
 
@@ -1582,6 +1599,7 @@ private fun MemScaffold(state: MemAppState) {
                 onRetryExtraction = state::retryMemoryExtraction,
                 onConnectInstagram = state::openInstagramConnection,
                 onImportCookies = state::importCookiesForMemory,
+                onClearAuth = state::clearAuthForMemory,
                 onAddToPlaylist = state::addToPlaylist,
                 onTagForReview = state::tagForReview,
             )
@@ -2101,6 +2119,7 @@ private fun SourceDetailSheet(
     onRetryExtraction: (MemoryUi) -> Unit,
     onConnectInstagram: (MemoryUi) -> Unit,
     onImportCookies: (MemoryUi, Uri) -> Unit,
+    onClearAuth: (MemoryUi) -> Unit,
     onAddToPlaylist: (MemoryUi) -> Unit,
     onTagForReview: (MemoryUi) -> Unit,
 ) {
@@ -2158,6 +2177,7 @@ private fun SourceDetailSheet(
                 onRetry = { onRetryExtraction(memory) },
                 onConnectInstagram = { onConnectInstagram(memory) },
                 onImportCookies = { uri -> onImportCookies(memory, uri) },
+                onClearAuth = { onClearAuth(memory) },
             )
         }
 
@@ -2319,6 +2339,7 @@ private fun AuthRequiredPanel(
     onRetry: () -> Unit,
     onConnectInstagram: () -> Unit,
     onImportCookies: (Uri) -> Unit,
+    onClearAuth: () -> Unit,
 ) {
     val cookiePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onImportCookies(uri)
@@ -2365,6 +2386,15 @@ private fun AuthRequiredPanel(
                 Icon(Icons.Rounded.RestartAlt, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
                 Text("Retry public extraction")
+            }
+            OutlinedButton(
+                onClick = onClearAuth,
+                modifier = Modifier.fillMaxWidth(),
+                shape = MemTokens.shapes.pill,
+            ) {
+                Icon(Icons.Rounded.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
+                Text("Clear saved auth")
             }
         }
     }

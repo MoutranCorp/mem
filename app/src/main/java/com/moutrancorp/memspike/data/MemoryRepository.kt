@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import java.io.File
 import java.net.URI
 import java.security.MessageDigest
 import java.util.Locale
@@ -261,6 +262,16 @@ class MemoryRepository(private val database: MemDatabase) {
         )
         database.authSessionDao().upsert(session)
         return session
+    }
+
+    suspend fun clearAuthSessionForInput(input: String): String? {
+        val domain = authDomain(input) ?: return null
+        val existing = database.authSessionDao().findByDomain(domain)
+        database.authSessionDao().deleteByDomain(domain)
+        existing?.cookieFilePath
+            ?.takeIf { it.isNotBlank() }
+            ?.let { runCatching { File(it).delete() } }
+        return domain
     }
 
     private suspend fun indexSource(source: SourceEntity, extractedText: String?) {

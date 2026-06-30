@@ -356,6 +356,9 @@ interface AuthSessionDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(session: AuthSessionEntity)
+
+    @Query("DELETE FROM auth_sessions WHERE domain = :domain")
+    suspend fun deleteByDomain(domain: String)
 }
 
 @Database(

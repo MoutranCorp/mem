@@ -121,7 +121,9 @@ Auth-gated source detail can now import an explicit domain-scoped `cookies.txt`,
 store it in an `auth_sessions` record, and retry extraction with `yt-dlp`
 `cookiefile`. Instagram auth-gated source detail can also open a dedicated
 login WebView, save the resulting session into the same auth session store, and
-retry extraction without asking the user to manually export cookies.
+retry extraction without asking the user to manually export cookies. The source
+detail auth callout can also clear the saved domain auth session for retesting
+or account switching.
 
 Deliverables:
 
