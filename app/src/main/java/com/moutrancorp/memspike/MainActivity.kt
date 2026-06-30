@@ -3256,9 +3256,14 @@ private fun JobRow(
 }
 
 @Composable
-private fun SmallActionButton(label: String, icon: ImageVector, onClick: () -> Unit) {
+private fun SmallActionButton(
+    label: String,
+    icon: ImageVector,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .clip(MemTokens.shapes.pill)
             .clickable(onClick = onClick)
             .background(MemTokens.colors.surfaceMuted)
@@ -3267,7 +3272,20 @@ private fun SmallActionButton(label: String, icon: ImageVector, onClick: () -> U
     ) {
         Icon(icon, contentDescription = null, tint = MemTokens.colors.accent, modifier = Modifier.size(14.dp))
         Spacer(modifier = Modifier.width(4.dp))
-        Text(label, color = MemTokens.colors.textSecondary, fontSize = 12.sp)
+        Text(label, color = MemTokens.colors.textSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+private fun CompactIconAction(label: String, icon: ImageVector, onClick: () -> Unit) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(38.dp)
+            .clip(CircleShape)
+            .background(MemTokens.colors.surfaceMuted),
+    ) {
+        Icon(icon, contentDescription = label, tint = MemTokens.colors.accent, modifier = Modifier.size(18.dp))
     }
 }
 
@@ -3472,18 +3490,6 @@ private fun MemoryGridCard(
                 contentAlignment = Alignment.Center,
             ) {
                 SourceVisual(memory, modifier = Modifier.fillMaxSize(), onClick = { onOpenMemory(memory) })
-                if (memory.localPlaybackPath != null) {
-                    IconButton(
-                        onClick = { onOpenMemory(memory) },
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(MemTokens.spacing.xs)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.54f)),
-                    ) {
-                        Icon(Icons.Rounded.Fullscreen, contentDescription = "Expand", tint = Color.White)
-                    }
-                }
             }
             Column(modifier = Modifier.clickable { onOpenDetail(memory) }) {
                 Text(memory.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -3492,9 +3498,17 @@ private fun MemoryGridCard(
                     Text(it, color = MemTokens.colors.textTertiary, fontSize = 12.sp, maxLines = 1)
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
-                SmallActionButton("Details", Icons.AutoMirrored.Rounded.Article) { onOpenDetail(memory) }
-                SmallActionButton("Delete", Icons.Rounded.DeleteOutline) { onDeleteMemory(memory) }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SmallActionButton(
+                    "Details",
+                    Icons.AutoMirrored.Rounded.Article,
+                    modifier = Modifier.weight(1f),
+                ) { onOpenDetail(memory) }
+                CompactIconAction("Delete memory", Icons.Rounded.DeleteOutline) { onDeleteMemory(memory) }
             }
         }
     }
