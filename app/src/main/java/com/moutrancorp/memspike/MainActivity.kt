@@ -1,5 +1,6 @@
 package com.moutrancorp.memspike
 
+import android.annotation.SuppressLint
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -10,6 +11,10 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -124,6 +129,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.chaquo.python.PyObject
@@ -310,6 +316,8 @@ private class MemAppState(
     var libraryQuery by mutableStateOf("")
         private set
     var selectedMemory by mutableStateOf<MemoryUi?>(null)
+        private set
+    var instagramAuthMemory by mutableStateOf<MemoryUi?>(null)
         private set
     var isExtracting by mutableStateOf(false)
     var logOutput by mutableStateOf("Ready. Share or paste a link to extract metadata on-device.")
@@ -556,6 +564,52 @@ private class MemAppState(
             )
             isExtracting = false
             logOutput = "Imported cookies for $domain. Retrying extraction..."
+            extract(input)
+        }
+    }
+
+    fun openInstagramConnection(memory: MemoryUi) {
+        val input = memory.openUrl
+        if (input.isNullOrBlank() || authDomain(input) != "instagram.com") {
+            logOutput = "Instagram connection is only available for Instagram sources."
+            return
+        }
+        instagramAuthMemory = memory
+        selectedMemory = null
+    }
+
+    fun closeInstagramConnection() {
+        instagramAuthMemory = null
+    }
+
+    fun saveInstagramConnection() {
+        val memory = instagramAuthMemory
+        val input = memory?.openUrl
+        if (memory == null || input.isNullOrBlank()) {
+            logOutput = "No Instagram source is selected."
+            instagramAuthMemory = null
+            return
+        }
+        isExtracting = true
+        logOutput = "Saving Instagram session..."
+        scope.launch {
+            val cookieFile = withContext(Dispatchers.IO) { context.writeInstagramCookiesFromWebView() }
+            if (cookieFile == null) {
+                isExtracting = false
+                logOutput = "Could not find an Instagram session in the login view."
+                return@launch
+            }
+            repository.saveAuthSession(
+                provider = "instagram",
+                domain = "instagram.com",
+                cookieFilePath = cookieFile.absolutePath,
+            )
+            instagramAuthMemory = null
+            selectedTab = MainTab.Capture
+            captureText = input
+            showCapture = true
+            isExtracting = false
+            logOutput = "Connected Instagram. Retrying extraction..."
             extract(input)
         }
     }
@@ -958,6 +1012,32 @@ private fun Context.copyCookieFile(domain: String, uri: Uri): File? {
     val authDir = File(filesDir, "auth/$domain").apply { mkdirs() }
     val target = File(authDir, "cookies.txt")
     target.writeText(raw)
+    return target
+}
+
+private fun Context.writeInstagramCookiesFromWebView(): File? {
+    val cookieManager = CookieManager.getInstance()
+    cookieManager.flush()
+    val cookieHeader = listOfNotNull(
+        cookieManager.getCookie("https://www.instagram.com/"),
+        cookieManager.getCookie("https://instagram.com/"),
+    ).joinToString("; ")
+    if (cookieHeader.isBlank() || !cookieHeader.contains("sessionid=")) return null
+    val rows = cookieHeader
+        .split(";")
+        .mapNotNull { raw ->
+            val parts = raw.trim().split("=", limit = 2)
+            if (parts.size != 2 || parts[0].isBlank()) {
+                null
+            } else {
+                ".instagram.com\tTRUE\t/\tTRUE\t0\t${parts[0]}\t${parts[1]}"
+            }
+        }
+        .distinct()
+    if (rows.isEmpty()) return null
+    val authDir = File(filesDir, "auth/instagram.com").apply { mkdirs() }
+    val target = File(authDir, "cookies.txt")
+    target.writeText(("# Netscape HTTP Cookie File\n" + rows.joinToString("\n") + "\n"))
     return target
 }
 
@@ -1500,11 +1580,19 @@ private fun MemScaffold(state: MemAppState) {
                 onDismiss = state::closeSourceDetail,
                 onOpenMemory = state::openMemory,
                 onRetryExtraction = state::retryMemoryExtraction,
+                onConnectInstagram = state::openInstagramConnection,
                 onImportCookies = state::importCookiesForMemory,
                 onAddToPlaylist = state::addToPlaylist,
                 onTagForReview = state::tagForReview,
             )
         }
+    }
+
+    state.instagramAuthMemory?.let {
+        InstagramConnectionScreen(
+            onClose = state::closeInstagramConnection,
+            onSave = state::saveInstagramConnection,
+        )
     }
 }
 
@@ -2011,6 +2099,7 @@ private fun SourceDetailSheet(
     onDismiss: () -> Unit,
     onOpenMemory: (MemoryUi) -> Unit,
     onRetryExtraction: (MemoryUi) -> Unit,
+    onConnectInstagram: (MemoryUi) -> Unit,
     onImportCookies: (MemoryUi, Uri) -> Unit,
     onAddToPlaylist: (MemoryUi) -> Unit,
     onTagForReview: (MemoryUi) -> Unit,
@@ -2067,6 +2156,7 @@ private fun SourceDetailSheet(
             AuthRequiredPanel(
                 memory = memory,
                 onRetry = { onRetryExtraction(memory) },
+                onConnectInstagram = { onConnectInstagram(memory) },
                 onImportCookies = { uri -> onImportCookies(memory, uri) },
             )
         }
@@ -2162,11 +2252,78 @@ private fun SourceDetailSheet(
     }
 }
 
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun AuthRequiredPanel(memory: MemoryUi, onRetry: () -> Unit, onImportCookies: (Uri) -> Unit) {
+private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding(),
+        color = MemTokens.colors.background,
+        contentColor = MemTokens.colors.textPrimary,
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(MemTokens.spacing.md),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Connect Instagram", color = MemTokens.colors.textPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Text("Login, then save the session.", color = MemTokens.colors.textSecondary, fontSize = 13.sp)
+                }
+                MemIconButton(Icons.Rounded.Close, "Close", onClose)
+            }
+            AndroidView(
+                factory = { context ->
+                    WebView(context).apply {
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        CookieManager.getInstance().setAcceptCookie(true)
+                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                        webViewClient = object : WebViewClient() {
+                            override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = false
+                        }
+                        loadUrl("https://www.instagram.com/accounts/login/")
+                    }
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(MemTokens.spacing.md),
+                horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
+            ) {
+                OutlinedButton(onClick = onClose, modifier = Modifier.weight(1f), shape = MemTokens.shapes.pill) {
+                    Text("Cancel")
+                }
+                PrimaryButton(
+                    label = "Save session",
+                    icon = Icons.Rounded.CheckCircle,
+                    onClick = onSave,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AuthRequiredPanel(
+    memory: MemoryUi,
+    onRetry: () -> Unit,
+    onConnectInstagram: () -> Unit,
+    onImportCookies: (Uri) -> Unit,
+) {
     val cookiePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) onImportCookies(uri)
     }
+    val canConnectInstagram = memory.openUrl?.let(::authDomain) == "instagram.com"
     SurfaceCard(
         container = MemTokens.colors.warning.copy(alpha = 0.10f),
         border = BorderStroke(1.dp, MemTokens.colors.warning.copy(alpha = 0.28f)),
@@ -2182,6 +2339,14 @@ private fun AuthRequiredPanel(memory: MemoryUi, onRetry: () -> Unit, onImportCoo
             }
             SelectionContainer {
                 Text(memory.summary, color = MemTokens.colors.textSecondary, fontSize = 13.sp, lineHeight = 19.sp)
+            }
+            if (canConnectInstagram) {
+                PrimaryButton(
+                    label = "Connect Instagram",
+                    icon = Icons.Rounded.Link,
+                    onClick = onConnectInstagram,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
             OutlinedButton(
                 onClick = { cookiePicker.launch(arrayOf("text/plain", "text/*", "application/octet-stream")) },

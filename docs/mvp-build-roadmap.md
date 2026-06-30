@@ -119,7 +119,9 @@ Auth-gated extractor failures now emit structured `needs_auth` candidates,
 persist as first-class sources, and show a focused auth callout with retry.
 Auth-gated source detail can now import an explicit domain-scoped `cookies.txt`,
 store it in an `auth_sessions` record, and retry extraction with `yt-dlp`
-`cookiefile`.
+`cookiefile`. Instagram auth-gated source detail can also open a dedicated
+login WebView, save the resulting session into the same auth session store, and
+retry extraction without asking the user to manually export cookies.
 
 Deliverables:
 
@@ -132,13 +134,13 @@ Deliverables:
 - Image import plus OCR spike. Started with local image import; OCR remains.
 - Voice note plus transcription spike.
 - Auth-gated source result type. Started with structured `needs_auth` results
-  and explicit cookie-file auth sessions.
+  and explicit cookie-file/WebView auth sessions.
 
 Exit criteria:
 
 - YouTube/public video links become searchable sources.
 - Instagram/auth-gated links save as `needs_auth` instead of dead failures.
-  Started.
+  Started, with Instagram WebView connection and cookie import fallback.
 - Articles and notes become searchable.
 - Users can share logs for any failed extraction.
 

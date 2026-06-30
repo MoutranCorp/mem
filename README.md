@@ -54,6 +54,8 @@ model used by `mobile-agent`.
   detail callout and retry-public-extraction action.
 - `needs_auth` source detail can import a domain-scoped `cookies.txt` file,
   store it as an auth session, and retry `yt-dlp` with that cookie file.
+- Instagram `needs_auth` source detail can open a dedicated login WebView,
+  save the resulting session into the auth session store, and retry extraction.
 
 The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and
@@ -81,9 +83,10 @@ C:\src\androidsdk\platform-tools\adb.exe install -r app\build\outputs\apk\debug\
 Some sources, especially Instagram Reels, often require a logged-in browser
 session. In that case yt-dlp will return an auth/cookies error even if YouTube
 works. The Play-safe version does not scrape browser cookies silently. It can
-import an explicit user-selected `cookies.txt` for a supported domain and pass
-that file to packaged `yt-dlp`; a smoother WebView connection flow should build
-on the same auth session store.
+open a dedicated Instagram login view, save the user-approved session cookies
+into app-private storage, and pass that cookie file to packaged `yt-dlp`.
+Importing an explicit user-selected `cookies.txt` remains available as a
+fallback.
 
 ## Next Work
 
@@ -102,7 +105,8 @@ Immediate next steps:
 3. Expand source detail into full video/article/document layouts.
 4. Build collection detail screens and richer tag editing.
 5. Expand FTS indexing to transcript/caption chunks and richer ranking.
-6. Add WebView-based Instagram connection on top of the auth session store.
+6. Harden Instagram auth with session validation, expiry messaging, and
+   encrypted storage.
 7. Add OCR for scanned/image-only PDFs and imported images.
 8. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
    libs and pass their paths to `yt-dlp` through `ffmpeg_location`.
