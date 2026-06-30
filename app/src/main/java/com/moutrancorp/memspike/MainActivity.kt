@@ -435,6 +435,14 @@ private class MemAppState(
         }
     }
 
+    fun repairRagEmbeddings() {
+        scope.launch {
+            val result = repository.repairEmbeddingIndex()
+            ragIndexHealth = repository.ragIndexHealth()
+            logOutput = "Embedding repair enqueued ${result.enqueued}, processed ${result.processed}, pending ${result.pending}, failed ${result.failed}, remaining ${result.remainingMissingOrStale}."
+        }
+    }
+
     fun openCapture(initialText: String = "", autoExtract: Boolean = false) {
         captureText = initialText
         showCapture = true
@@ -3029,6 +3037,7 @@ private fun AppearanceSheet(state: MemAppState) {
                 RagIndexHealthPanel(
                     health = state.ragIndexHealth,
                     onRefresh = state::refreshRagIndexHealth,
+                    onRepairEmbeddings = state::repairRagEmbeddings,
                 )
             }
         }
@@ -3050,6 +3059,7 @@ private fun AppearanceSheet(state: MemAppState) {
 private fun RagIndexHealthPanel(
     health: RagIndexHealth?,
     onRefresh: () -> Unit,
+    onRepairEmbeddings: () -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
@@ -3086,10 +3096,21 @@ private fun RagIndexHealthPanel(
             IndexHealthRow("FTS rows", health.chunkSearchRowCount.toString())
             IndexHealthRow("Caption tracks", health.captionTrackCount.toString())
             IndexHealthRow("Visual observations", health.visualObservationCount.toString())
+            IndexHealthRow("Missing embeddings", health.missingEmbeddingCount.toString())
+            IndexHealthRow("Embedding jobs", "${health.pendingEmbeddingJobCount} pending / ${health.failedEmbeddingJobCount} failed")
             IndexHealthRow("Semantic scan window", health.semanticCandidateWindow.toString())
             IndexHealthRow("Playback assets", health.playbackAssetCount.toString())
             IndexHealthRow("Search logs", health.searchQueryCount.toString())
             IndexHealthRow("Agent actions", health.agentActionCount.toString())
+            OutlinedButton(
+                onClick = onRepairEmbeddings,
+                modifier = Modifier.fillMaxWidth(),
+                shape = MemTokens.shapes.pill,
+            ) {
+                Icon(Icons.Rounded.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
+                Text("Repair embeddings")
+            }
             if (health.warnings.isNotEmpty()) {
                 Text(
                     text = "Warnings: ${health.warnings.joinToString("; ")}",

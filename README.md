@@ -165,6 +165,9 @@ Immediate next steps:
    Fusion now dedupes nearby timestamped chunks from the same source/chunk type
    so transcript searches cite the strongest moment instead of flooding results
    with adjacent segments.
+   The app now persists `embedding_jobs`, counts missing/stale chunk embeddings,
+   and exposes a settings repair action that enqueues and drains local
+   re-embedding work through the same provider/vector-index boundary.
 6. Add the first agent search tool with cited results and action previews.
    Started with a local agent search panel that summarizes grounded citations
    and can draft a collection from the cited source set. Collection drafts now

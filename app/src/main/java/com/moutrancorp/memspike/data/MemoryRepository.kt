@@ -37,6 +37,8 @@ private const val LOCAL_SEMANTIC_EXACT_SCAN_LIMIT = 10_000
 private const val FILTER_ONLY_SCAN_LIMIT = 10_000
 private const val SEARCH_RESULT_LIMIT = 40
 private const val NEARBY_TIMESTAMP_DEDUPE_WINDOW_MS = 30_000L
+private const val EMBEDDING_MAINTENANCE_ENQUEUE_LIMIT = 500
+private const val EMBEDDING_MAINTENANCE_DRAIN_LIMIT = 80
 
 class MemoryRepository(private val database: MemDatabase) {
     private val embeddingProvider: EmbeddingProvider = LocalHashEmbeddingProvider()
@@ -98,10 +100,86 @@ class MemoryRepository(private val database: MemDatabase) {
         )
     }
 
+    suspend fun repairEmbeddingIndex(): EmbeddingMaintenanceResult {
+        val now = System.currentTimeMillis()
+        ensureLocalEmbeddingModel(now)
+        val enqueued = enqueueMissingEmbeddingJobs(EMBEDDING_MAINTENANCE_ENQUEUE_LIMIT, now)
+        val processed = drainEmbeddingJobs(EMBEDDING_MAINTENANCE_DRAIN_LIMIT, now)
+        return EmbeddingMaintenanceResult(
+            enqueued = enqueued,
+            processed = processed,
+            pending = database.embeddingJobDao().countPending(),
+            failed = database.embeddingJobDao().countFailed(),
+            remainingMissingOrStale = database.embeddingJobDao().countMissingOrStale(LOCAL_EMBEDDING_MODEL_ID, "text"),
+        )
+    }
+
+    private suspend fun enqueueMissingEmbeddingJobs(limit: Int, now: Long): Int {
+        val missing = database.embeddingJobDao().missingOrStaleChunks(LOCAL_EMBEDDING_MODEL_ID, "text", limit)
+        missing.forEach { chunk ->
+            database.embeddingJobDao().upsert(
+                EmbeddingJobEntity(
+                    id = stableId("embedding_job:${chunk.chunkId}:$LOCAL_EMBEDDING_MODEL_ID:text"),
+                    chunkId = chunk.chunkId,
+                    sourceId = chunk.sourceId,
+                    modelId = LOCAL_EMBEDDING_MODEL_ID,
+                    embeddingType = "text",
+                    contentHash = chunk.contentHash.orEmpty(),
+                    state = "queued",
+                    reason = "missing_or_stale_embedding",
+                    retryCount = 0,
+                    lastError = null,
+                    createdAt = now,
+                    updatedAt = now,
+                ),
+            )
+        }
+        return missing.size
+    }
+
+    private suspend fun drainEmbeddingJobs(limit: Int, now: Long): Int {
+        val jobs = database.embeddingJobDao().queuedCandidates(limit)
+        var processed = 0
+        jobs.forEach { job ->
+            database.embeddingJobDao().markRunning(job.jobId, System.currentTimeMillis())
+            runCatching {
+                vectorIndex.upsert(
+                    embeddingProvider.embed(
+                        listOf(
+                            EmbeddingInput(
+                                id = job.chunkId,
+                                text = job.text,
+                                type = "text",
+                                metadata = mapOf(
+                                    "sourceId" to job.sourceId,
+                                    "modelId" to LOCAL_EMBEDDING_MODEL_ID,
+                                    "embeddingType" to "text",
+                                    "contentHash" to (job.contentHash ?: job.text.contentHash()),
+                                    "createdAt" to now.toString(),
+                                ),
+                            ),
+                        ),
+                    ),
+                )
+            }.onSuccess {
+                database.embeddingJobDao().markDone(job.jobId, System.currentTimeMillis())
+                processed += 1
+            }.onFailure { error ->
+                database.embeddingJobDao().markFailed(
+                    jobId = job.jobId,
+                    error = error.message ?: error::class.java.simpleName,
+                    now = System.currentTimeMillis(),
+                )
+            }
+        }
+        return processed
+    }
+
     suspend fun ragIndexHealth(): RagIndexHealth {
         val sourceCount = database.sourceDao().countAll()
         val chunkCount = database.documentChunkDao().countAll()
         val embeddedChunkCount = database.chunkEmbeddingDao().countByType("text")
+        val missingEmbeddingCount = database.embeddingJobDao().countMissingOrStale(LOCAL_EMBEDDING_MODEL_ID, "text")
         val coverage = if (chunkCount == 0) 0f else embeddedChunkCount.toFloat() / chunkCount.toFloat()
         return RagIndexHealth(
             sourceCount = sourceCount,
@@ -121,6 +199,9 @@ class MemoryRepository(private val database: MemDatabase) {
             captionTrackCount = database.captionTrackDao().countAll(),
             visualObservationCount = database.visualObservationDao().countAll(),
             embeddedChunkCount = embeddedChunkCount,
+            missingEmbeddingCount = missingEmbeddingCount,
+            pendingEmbeddingJobCount = database.embeddingJobDao().countPending(),
+            failedEmbeddingJobCount = database.embeddingJobDao().countFailed(),
             embeddingCoverage = coverage,
             semanticCandidateWindow = LOCAL_SEMANTIC_EXACT_SCAN_LIMIT,
             playbackAssetCount = database.assetDao().countByRole("playback"),
@@ -1298,6 +1379,9 @@ data class RagIndexHealth(
     val captionTrackCount: Int,
     val visualObservationCount: Int,
     val embeddedChunkCount: Int,
+    val missingEmbeddingCount: Int,
+    val pendingEmbeddingJobCount: Int,
+    val failedEmbeddingJobCount: Int,
     val embeddingCoverage: Float,
     val semanticCandidateWindow: Int,
     val playbackAssetCount: Int,
@@ -1311,6 +1395,9 @@ data class RagIndexHealth(
         get() = buildList {
             if (sourceCount > 0 && indexedChunkCount == 0) add("No indexed chunks yet")
             if (metadataOnlySourceCount > 0) add("$metadataOnlySourceCount metadata-only source${if (metadataOnlySourceCount == 1) "" else "s"}")
+            if (missingEmbeddingCount > 0) add("$missingEmbeddingCount chunks need embedding repair")
+            if (pendingEmbeddingJobCount > 0) add("$pendingEmbeddingJobCount embedding job${if (pendingEmbeddingJobCount == 1) "" else "s"} queued")
+            if (failedEmbeddingJobCount > 0) add("$failedEmbeddingJobCount embedding job${if (failedEmbeddingJobCount == 1) "" else "s"} failed")
             if (indexedChunkCount > 0 && embeddingCoverage < 0.95f) add("Embedding coverage below 95%")
             if (embeddedChunkCount > semanticCandidateWindow) add("Semantic fallback scans newest $semanticCandidateWindow embeddings")
             if (playbackAssetCount > 0 && visualObservationCount == 0) add("Playable videos have no visual observations")
@@ -1416,6 +1503,14 @@ data class AgentAnswerData(
     val sourceCount: Int,
     val usedTools: List<String>,
     val rawJson: String,
+)
+
+data class EmbeddingMaintenanceResult(
+    val enqueued: Int,
+    val processed: Int,
+    val pending: Int,
+    val failed: Int,
+    val remainingMissingOrStale: Int,
 )
 
 data class SourceSnapshot(

@@ -232,6 +232,44 @@ data class ChunkEmbeddingEntity(
 )
 
 @Entity(
+    tableName = "embedding_jobs",
+    foreignKeys = [
+        ForeignKey(
+            entity = DocumentChunkEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["chunkId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
+            entity = SourceEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["sourceId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [
+        Index(value = ["chunkId", "modelId", "embeddingType"], unique = true),
+        Index(value = ["sourceId"]),
+        Index(value = ["state"]),
+        Index(value = ["updatedAt"]),
+    ],
+)
+data class EmbeddingJobEntity(
+    @PrimaryKey val id: String,
+    val chunkId: String,
+    val sourceId: String,
+    val modelId: String,
+    val embeddingType: String,
+    val contentHash: String,
+    val state: String,
+    val reason: String,
+    val retryCount: Int,
+    val lastError: String?,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
+@Entity(
     tableName = "visual_observations",
     foreignKeys = [
         ForeignKey(
@@ -433,6 +471,14 @@ data class ChunkEmbeddingCandidate(
     val savedAt: Long,
     val dimensions: Int,
     val vector: ByteArray,
+)
+
+data class EmbeddingJobCandidate(
+    val jobId: String,
+    val chunkId: String,
+    val sourceId: String,
+    val text: String,
+    val contentHash: String?,
 )
 
 @Dao
@@ -717,6 +763,78 @@ interface ChunkEmbeddingDao {
 }
 
 @Dao
+interface EmbeddingJobDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(job: EmbeddingJobEntity)
+
+    @Query("SELECT COUNT(*) FROM embedding_jobs WHERE state IN ('queued', 'running')")
+    suspend fun countPending(): Int
+
+    @Query("SELECT COUNT(*) FROM embedding_jobs WHERE state = 'failed'")
+    suspend fun countFailed(): Int
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM document_chunks
+        WHERE NOT EXISTS (
+            SELECT 1 FROM chunk_embeddings
+            WHERE chunk_embeddings.chunkId = document_chunks.id
+              AND chunk_embeddings.modelId = :modelId
+              AND chunk_embeddings.embeddingType = :embeddingType
+              AND chunk_embeddings.contentHash = COALESCE(document_chunks.contentHash, '')
+        )
+        """,
+    )
+    suspend fun countMissingOrStale(modelId: String, embeddingType: String): Int
+
+    @Query(
+        """
+        SELECT document_chunks.id AS chunkId, document_chunks.sourceId AS sourceId,
+               document_chunks.contentHash AS contentHash
+        FROM document_chunks
+        WHERE NOT EXISTS (
+            SELECT 1 FROM chunk_embeddings
+            WHERE chunk_embeddings.chunkId = document_chunks.id
+              AND chunk_embeddings.modelId = :modelId
+              AND chunk_embeddings.embeddingType = :embeddingType
+              AND chunk_embeddings.contentHash = COALESCE(document_chunks.contentHash, '')
+        )
+        LIMIT :limit
+        """,
+    )
+    suspend fun missingOrStaleChunks(modelId: String, embeddingType: String, limit: Int): List<MissingEmbeddingChunk>
+
+    @Query(
+        """
+        SELECT embedding_jobs.id AS jobId, document_chunks.id AS chunkId,
+               document_chunks.sourceId AS sourceId, document_chunks.text AS text,
+               document_chunks.contentHash AS contentHash
+        FROM embedding_jobs
+        INNER JOIN document_chunks ON document_chunks.id = embedding_jobs.chunkId
+        WHERE embedding_jobs.state = 'queued'
+        ORDER BY embedding_jobs.updatedAt ASC
+        LIMIT :limit
+        """,
+    )
+    suspend fun queuedCandidates(limit: Int): List<EmbeddingJobCandidate>
+
+    @Query("UPDATE embedding_jobs SET state = 'running', updatedAt = :now WHERE id = :jobId")
+    suspend fun markRunning(jobId: String, now: Long)
+
+    @Query("UPDATE embedding_jobs SET state = 'done', lastError = NULL, updatedAt = :now WHERE id = :jobId")
+    suspend fun markDone(jobId: String, now: Long)
+
+    @Query("UPDATE embedding_jobs SET state = 'failed', retryCount = retryCount + 1, lastError = :error, updatedAt = :now WHERE id = :jobId")
+    suspend fun markFailed(jobId: String, error: String, now: Long)
+}
+
+data class MissingEmbeddingChunk(
+    val chunkId: String,
+    val sourceId: String,
+    val contentHash: String?,
+)
+
+@Dao
 interface VisualObservationDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(observation: VisualObservationEntity)
@@ -847,6 +965,7 @@ interface AuthSessionDao {
         ChunkSearchEntity::class,
         EmbeddingModelEntity::class,
         ChunkEmbeddingEntity::class,
+        EmbeddingJobEntity::class,
         VisualObservationEntity::class,
         SearchQueryEntity::class,
         AgentActionEntity::class,
@@ -856,7 +975,7 @@ interface AuthSessionDao {
         CollectionSourceEntity::class,
         AuthSessionEntity::class,
     ],
-    version = 8,
+    version = 9,
     exportSchema = true,
 )
 abstract class MemDatabase : RoomDatabase() {
@@ -869,6 +988,7 @@ abstract class MemDatabase : RoomDatabase() {
     abstract fun chunkSearchDao(): ChunkSearchDao
     abstract fun embeddingModelDao(): EmbeddingModelDao
     abstract fun chunkEmbeddingDao(): ChunkEmbeddingDao
+    abstract fun embeddingJobDao(): EmbeddingJobDao
     abstract fun visualObservationDao(): VisualObservationDao
     abstract fun searchQueryDao(): SearchQueryDao
     abstract fun agentActionDao(): AgentActionDao
@@ -936,6 +1056,40 @@ abstract class MemDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 createAgentActionTables(db)
             }
+        }
+
+        private val migration8To9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                createEmbeddingJobTables(db)
+            }
+        }
+
+        private fun createEmbeddingJobTables(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `embedding_jobs` (
+                    `id` TEXT NOT NULL,
+                    `chunkId` TEXT NOT NULL,
+                    `sourceId` TEXT NOT NULL,
+                    `modelId` TEXT NOT NULL,
+                    `embeddingType` TEXT NOT NULL,
+                    `contentHash` TEXT NOT NULL,
+                    `state` TEXT NOT NULL,
+                    `reason` TEXT NOT NULL,
+                    `retryCount` INTEGER NOT NULL,
+                    `lastError` TEXT,
+                    `createdAt` INTEGER NOT NULL,
+                    `updatedAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`),
+                    FOREIGN KEY(`chunkId`) REFERENCES `document_chunks`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE,
+                    FOREIGN KEY(`sourceId`) REFERENCES `sources`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_embedding_jobs_chunkId_modelId_embeddingType` ON `embedding_jobs` (`chunkId`, `modelId`, `embeddingType`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_embedding_jobs_sourceId` ON `embedding_jobs` (`sourceId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_embedding_jobs_state` ON `embedding_jobs` (`state`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_embedding_jobs_updatedAt` ON `embedding_jobs` (`updatedAt`)")
         }
 
         private fun createAgentActionTables(db: SupportSQLiteDatabase) {
@@ -1207,7 +1361,7 @@ abstract class MemDatabase : RoomDatabase() {
                     MemDatabase::class.java,
                     "mem.db",
                 )
-                    .addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6, migration6To7, migration7To8)
+                    .addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6, migration6To7, migration7To8, migration8To9)
                     .build()
                     .also { instance = it }
             }

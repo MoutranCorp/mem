@@ -194,6 +194,20 @@
       "text": "Visual frame sample 1 for Imported Gameplay Clip at 0:01. Placeholder observation without detected-event claims."
     }
   ],
+  "embeddedChunkIds": [
+    "chunk_distribution_transcript",
+    "chunk_distribution_summary",
+    "chunk_tokyo_transit_transcript",
+    "chunk_kyoto_article",
+    "chunk_japan_note",
+    "chunk_pdf_agents",
+    "chunk_instagram_auth",
+    "chunk_gameplay_visual",
+    "chunk_gameplay_transcript",
+    "chunk_exact_phrase"
+  ],
+  "embeddingEnqueueLimit": 500,
+  "embeddingDrainLimit": 80,
   "toolContracts": [
     {
       "name": "Transcript tool returns timestamped caption segments",
@@ -234,6 +248,15 @@
       "requiresUsedTools": true,
       "requiresContentDepth": "transcript",
       "requiresText": "grounded source"
+    },
+    {
+      "name": "Embedding maintenance detects missing vectors",
+      "tool": "embedding_maintenance",
+      "minValues": {
+        "missingEmbeddingCount": 1,
+        "enqueued": 1,
+        "processed": 1
+      }
     }
   ],
   "queries": [

@@ -167,6 +167,9 @@ Expected:
   unindexed memories.
 - The deterministic agent runtime returns cited answer payloads with used-tool
   metadata, so the UI and future model runtime share the same contract.
+- Embedding maintenance detects missing vectors, enqueues repair jobs, and
+  processes them through the provider/index boundary instead of relying on
+  one-shot ingest-time embedding only.
 
 ## Manual Smoke Test
 

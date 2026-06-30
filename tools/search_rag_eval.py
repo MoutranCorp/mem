@@ -570,6 +570,9 @@ def load_fixture(path: Path) -> tuple[list[Chunk], dict[str, dict[str, Any]], di
     auxiliary = {
         "captionTracks": data.get("captionTracks", []),
         "visualObservations": data.get("visualObservations", []),
+        "embeddedChunkIds": data.get("embeddedChunkIds", []),
+        "embeddingEnqueueLimit": data.get("embeddingEnqueueLimit", 500),
+        "embeddingDrainLimit": data.get("embeddingDrainLimit", 80),
     }
     chunks: list[Chunk] = []
     for raw in data["chunks"]:
@@ -790,6 +793,22 @@ def tool_agent_answer(query: str, chunks: list[Chunk], auxiliary: dict[str, list
     }
 
 
+def tool_embedding_maintenance(chunks: list[Chunk], auxiliary: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+    embedded_ids = set(auxiliary.get("embeddedChunkIds", []))
+    missing = [chunk for chunk in chunks if chunk.id not in embedded_ids]
+    enqueued = missing[: auxiliary.get("embeddingEnqueueLimit", 500)]
+    processed = enqueued[: auxiliary.get("embeddingDrainLimit", 80)]
+    return {
+        "tool": "embedding_maintenance",
+        "missingEmbeddingCount": len(missing),
+        "enqueued": len(enqueued),
+        "processed": len(processed),
+        "remainingMissingOrStale": max(len(missing) - len(processed), 0),
+        "pending": max(len(enqueued) - len(processed), 0),
+        "failed": 0,
+    }
+
+
 def source_content_profile(
     source_id: str,
     chunks: list[Chunk],
@@ -884,6 +903,8 @@ def check_tool_contract(
         payload = tool_explain_result(contract["query"], source_id, chunks)
     elif tool == "agent_answer":
         payload = tool_agent_answer(contract["query"], chunks, auxiliary)
+    elif tool == "embedding_maintenance":
+        payload = tool_embedding_maintenance(chunks, auxiliary)
     else:
         return [f"unknown tool contract: {tool}"]
 
@@ -918,6 +939,10 @@ def check_tool_contract(
         failures.append("missing cited answer citations")
     if contract.get("requiresUsedTools") and not payload.get("usedTools"):
         failures.append("missing used tools")
+    for key, minimum in contract.get("minValues", {}).items():
+        value = payload.get(key)
+        if not isinstance(value, int | float) or value < minimum:
+            failures.append(f"expected {key} >= {minimum}, got {value}")
     required_depth = contract.get("requiresContentDepth")
     if required_depth and required_depth not in json.dumps(payload):
         failures.append(f"missing content depth {required_depth}")
