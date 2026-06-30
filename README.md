@@ -63,6 +63,8 @@ model used by `mobile-agent`.
 - Instagram login WebView includes loading/error diagnostics, reload, browser
   reachability check, explicit hardware acceleration, and a mobile Chrome user
   agent for better compatibility.
+- Instagram login diagnostics can switch between mobile, home, desktop, and
+  default WebView modes and show page DOM/console diagnostics.
 
 The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and

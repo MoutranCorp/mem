@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
@@ -2302,11 +2303,38 @@ private fun SourceDetailSheet(
 @Composable
 private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
     val externalContext = LocalContext.current
+    data class LoginMode(val label: String, val url: String, val userAgent: String)
+
+    val defaultUserAgent = remember { WebSettings.getDefaultUserAgent(externalContext) }
+    val mobileChromeUserAgent = remember {
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
+    }
+    val desktopChromeUserAgent = remember {
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    }
+    val loginModes = remember(defaultUserAgent, mobileChromeUserAgent, desktopChromeUserAgent) {
+        listOf(
+            LoginMode("Mobile", "https://www.instagram.com/accounts/login/?hl=en", mobileChromeUserAgent),
+            LoginMode("Home", "https://www.instagram.com/?hl=en", mobileChromeUserAgent),
+            LoginMode("Desktop", "https://www.instagram.com/accounts/login/?hl=en", desktopChromeUserAgent),
+            LoginMode("WebView", "https://www.instagram.com/accounts/login/?hl=en", defaultUserAgent),
+        )
+    }
+    var selectedMode by remember { mutableStateOf(loginModes.first()) }
     var webView by remember { mutableStateOf<WebView?>(null) }
     var loadStatus by remember { mutableStateOf("Loading Instagram...") }
     var loadProgress by remember { mutableStateOf(0) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    val loginUrl = "https://www.instagram.com/accounts/login/"
+    var pageDiagnostics by remember { mutableStateOf("Waiting for page diagnostics...") }
+    fun loadMode(mode: LoginMode) {
+        selectedMode = mode
+        loadError = null
+        loadProgress = 0
+        pageDiagnostics = "Waiting for page diagnostics..."
+        loadStatus = "Loading ${mode.label} login..."
+        webView?.settings?.userAgentString = mode.userAgent
+        webView?.loadUrl(mode.url)
+    }
 
     Surface(
         modifier = Modifier
@@ -2349,19 +2377,28 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
                         )
                         MemIconButton(Icons.Rounded.Refresh, "Reload") {
                             loadError = null
-                            loadStatus = "Reloading Instagram..."
-                            webView?.loadUrl(loginUrl)
+                            loadStatus = "Reloading ${selectedMode.label} login..."
+                            webView?.loadUrl(selectedMode.url)
                         }
                         MemIconButton(Icons.Rounded.OpenInBrowser, "Open in browser") {
                             runCatching {
-                                externalContext.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(loginUrl)))
+                                externalContext.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(selectedMode.url)))
+                            }
+                        }
+                    }
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
+                        items(loginModes) { mode ->
+                            SelectablePill(label = mode.label, selected = selectedMode == mode) {
+                                loadMode(mode)
                             }
                         }
                     }
                     Text(
-                        "If this stays blank, use Open in browser to confirm Instagram is reachable on this phone.",
+                        pageDiagnostics,
                         color = MemTokens.colors.textTertiary,
                         fontSize = 11.sp,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
@@ -2379,8 +2416,7 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
                         settings.useWideViewPort = true
                         settings.loadWithOverviewMode = true
                         settings.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
-                        settings.userAgentString =
-                            "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
+                        settings.userAgentString = selectedMode.userAgent
                         CookieManager.getInstance().setAcceptCookie(true)
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                         webChromeClient = object : WebChromeClient() {
@@ -2389,6 +2425,11 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
                                 if (newProgress >= 100 && loadError == null) {
                                     loadStatus = "Instagram loaded."
                                 }
+                            }
+
+                            override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+                                pageDiagnostics = "Console ${consoleMessage.messageLevel()}: ${consoleMessage.message()}"
+                                return true
                             }
                         }
                         webViewClient = object : WebViewClient() {
@@ -2402,6 +2443,25 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
                                 if (loadError == null) {
                                     loadStatus = "Loaded ${url ?: "Instagram"}"
                                 }
+                                view.evaluateJavascript(
+                                    """
+                                    (function() {
+                                      var body = document.body;
+                                      return JSON.stringify({
+                                        title: document.title || "",
+                                        ready: document.readyState || "",
+                                        url: location.href || "",
+                                        children: body ? body.children.length : -1,
+                                        text: body ? (body.innerText || "").slice(0, 180) : ""
+                                      });
+                                    })();
+                                    """.trimIndent(),
+                                ) { result ->
+                                    pageDiagnostics = result
+                                        .replace("\\\"", "\"")
+                                        .replace("\\n", " ")
+                                        .take(260)
+                                }
                             }
 
                             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
@@ -2410,7 +2470,7 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
                                 }
                             }
                         }
-                        loadUrl(loginUrl)
+                        loadUrl(selectedMode.url)
                     }
                 },
                 modifier = Modifier
