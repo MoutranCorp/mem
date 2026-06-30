@@ -406,7 +406,7 @@ private class MemAppState(
                             memories.firstOrNull { it.id == sourceId }
                                 ?: repository.sourceSnapshot(sourceId)?.toMemoryUi()
                         }
-                        .map { it.withoutInlinePlayback() }
+                        .map { it.withoutSearchLocalMedia() }
                     searchMemories.addAll(citedSources)
                 }
             }
@@ -1778,7 +1778,10 @@ private data class MemoryUi(
     val needsAuth: Boolean
         get() = authState == "needs_auth" || processingState == "needs_auth"
 
-    fun withoutInlinePlayback(): MemoryUi = copy(localPlaybackPath = null)
+    fun withoutSearchLocalMedia(): MemoryUi = copy(
+        thumbnailUrl = thumbnailUrl?.takeUnless { it.startsWith("/") || it.startsWith("file:") },
+        localPlaybackPath = null,
+    )
 }
 
 private data class CollectionUi(
@@ -2472,7 +2475,9 @@ private fun LibraryScreen(state: MemAppState) {
         state.memories
     } else {
         val citedIds = state.searchMemories.map { it.id }.toSet()
-        state.searchMemories + state.memories.filterNot { it.id in citedIds }
+        state.searchMemories + state.memories
+            .filterNot { it.id in citedIds }
+            .map { it.withoutSearchLocalMedia() }
     }
     Column(
         modifier = Modifier
