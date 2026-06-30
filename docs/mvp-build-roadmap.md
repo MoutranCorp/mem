@@ -298,7 +298,11 @@ Exit criteria:
    playback to their indexed moment.
 3. Add richer source-detail transcript/article layouts with jump targets.
 4. Add benchmark fixtures for saved videos, articles, notes, PDFs, and image
-   memories.
+   memories. Started with `tools/search_rag_eval.py` and
+   `tools/search_rag_eval_fixture.json`, an offline synthetic regression eval
+   for transcript citations, semantic travel retrieval, hard filters,
+   timestamp capabilities, visual placeholder honesty, and agentic collection
+   seeds.
 5. Implement the embedding provider and vector index interfaces with a first
    local/cloud provider behind user-visible settings. Started with persisted
    chunk embeddings, a local deterministic semantic fallback, and hybrid

@@ -1,0 +1,218 @@
+{
+  "sources": [
+    {
+      "id": "yt_founder_distribution",
+      "title": "Founder Lessons Nobody Tells You",
+      "sourceType": "video",
+      "originDomain": "youtube.com",
+      "author": "Startup Lab",
+      "durationSeconds": 780,
+      "savedAt": "2026-06-20T12:00:00Z"
+    },
+    {
+      "id": "yt_japan_food_short",
+      "title": "Tokyo Food And Transit Notes",
+      "sourceType": "video",
+      "originDomain": "youtube.com",
+      "author": "Travel Desk",
+      "durationSeconds": 240,
+      "savedAt": "2026-06-25T12:00:00Z"
+    },
+    {
+      "id": "article_kyoto_hotels",
+      "title": "Quiet Kyoto Hotels Near Train Lines",
+      "sourceType": "article",
+      "originDomain": "example.com",
+      "author": "Mina Park",
+      "durationSeconds": null,
+      "savedAt": "2026-05-02T09:00:00Z"
+    },
+    {
+      "id": "note_japan_itinerary",
+      "title": "Japan Trip Notebook",
+      "sourceType": "note",
+      "originDomain": null,
+      "author": null,
+      "durationSeconds": null,
+      "savedAt": "2026-06-18T08:30:00Z"
+    },
+    {
+      "id": "pdf_ai_agents",
+      "title": "AI Agents Operating Manual",
+      "sourceType": "pdf",
+      "originDomain": null,
+      "author": "Mem Research",
+      "durationSeconds": null,
+      "savedAt": "2026-04-12T15:00:00Z"
+    },
+    {
+      "id": "instagram_needs_auth",
+      "title": "Instagram Reel Saved For Later",
+      "sourceType": "link",
+      "originDomain": "instagram.com",
+      "author": "private_creator",
+      "durationSeconds": null,
+      "savedAt": "2026-06-28T16:00:00Z"
+    },
+    {
+      "id": "local_gameplay_visual",
+      "title": "Imported Gameplay Clip",
+      "sourceType": "video",
+      "originDomain": null,
+      "author": null,
+      "durationSeconds": 45,
+      "savedAt": "2026-06-29T18:00:00Z"
+    },
+    {
+      "id": "article_ignored_exact",
+      "title": "Exact Phrase Article",
+      "sourceType": "article",
+      "originDomain": "example.org",
+      "author": "Archive",
+      "durationSeconds": null,
+      "savedAt": "2026-03-10T10:00:00Z"
+    }
+  ],
+  "chunks": [
+    {
+      "id": "chunk_distribution_transcript",
+      "sourceId": "yt_founder_distribution",
+      "chunkType": "transcript",
+      "startTimeMs": 93000,
+      "text": "A founder can have a polished product, but distribution matters more than taste when the market is crowded."
+    },
+    {
+      "id": "chunk_distribution_summary",
+      "sourceId": "yt_founder_distribution",
+      "chunkType": "metadata",
+      "text": "Startup advice about positioning and founder sales."
+    },
+    {
+      "id": "chunk_tokyo_transit_transcript",
+      "sourceId": "yt_japan_food_short",
+      "chunkType": "transcript",
+      "startTimeMs": 42000,
+      "text": "For a first Japan vacation, stay near the Yamanote line, plan Tokyo food stops, and keep transit cards ready."
+    },
+    {
+      "id": "chunk_kyoto_article",
+      "sourceId": "article_kyoto_hotels",
+      "chunkType": "article",
+      "text": "Kyoto hotels near Karasuma and Kyoto Station make day trips easy, especially if the itinerary includes Nara and Osaka."
+    },
+    {
+      "id": "chunk_japan_note",
+      "sourceId": "note_japan_itinerary",
+      "chunkType": "note",
+      "text": "Japan itinerary draft: Tokyo arrival, Kyoto temples, Osaka food night, reserve train seats, leave one open neighborhood day."
+    },
+    {
+      "id": "chunk_pdf_agents",
+      "sourceId": "pdf_ai_agents",
+      "chunkType": "document",
+      "text": "AI agents need tool contracts, evaluation suites, action previews, and reversible operations for reliable automation."
+    },
+    {
+      "id": "chunk_instagram_auth",
+      "sourceId": "instagram_needs_auth",
+      "chunkType": "metadata",
+      "text": "needs_auth instagram reel metadata placeholder. Authentication is required before transcript or media extraction."
+    },
+    {
+      "id": "chunk_gameplay_visual",
+      "sourceId": "local_gameplay_visual",
+      "chunkType": "visual",
+      "startTimeMs": 1000,
+      "text": "Visual frame sample 1 for Imported Gameplay Clip at 0:01. A local thumbnail frame asset is available. This is a local visual observation placeholder from playable media without claiming detected events."
+    },
+    {
+      "id": "chunk_gameplay_transcript",
+      "sourceId": "local_gameplay_visual",
+      "chunkType": "transcript",
+      "startTimeMs": 17000,
+      "text": "The commentator says the player misses the platform and everyone laughs during the match."
+    },
+    {
+      "id": "chunk_exact_phrase",
+      "sourceId": "article_ignored_exact",
+      "chunkType": "article",
+      "text": "This paragraph contains an exact phrase that should still match when a different ignored token is excluded."
+    }
+  ],
+  "queries": [
+    {
+      "name": "Transcript-only exact phrase",
+      "query": "\"distribution matters\"",
+      "expectedTopSourceId": "yt_founder_distribution",
+      "requiredChunkTypes": ["transcript"],
+      "requiresTimestamp": true,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Transcript filtered video search",
+      "query": "type:video has:transcript distribution",
+      "expectedAnySourceIds": ["yt_founder_distribution"],
+      "requiredChunkTypes": ["transcript"],
+      "requiresTimestamp": true,
+      "allResultsSourceType": "video",
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Semantic travel planning",
+      "query": "help me build a Japan itinerary",
+      "expectedAnySourceIds": ["yt_japan_food_short", "article_kyoto_hotels", "note_japan_itinerary"],
+      "minResults": 3,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Duration and saved range filter",
+      "query": "type:video duration:<5m saved:last30d",
+      "expectedAnySourceIds": ["yt_japan_food_short", "local_gameplay_visual"],
+      "allResultsSourceType": "video",
+      "allResultsMaxDurationSeconds": 300,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Date and timestamp filter",
+      "query": "date:2026-06 has:timestamp",
+      "expectedAnySourceIds": ["yt_founder_distribution", "yt_japan_food_short", "local_gameplay_visual"],
+      "allResultsTimestamped": true,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "PDF hard filter",
+      "query": "type:pdf ai agents",
+      "expectedTopSourceId": "pdf_ai_agents",
+      "allResultsSourceType": "pdf",
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Instagram needs auth filter",
+      "query": "status:needs_auth site:instagram.com",
+      "expectedTopSourceId": "instagram_needs_auth",
+      "allResultsDomain": "instagram.com",
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Visual placeholder filter",
+      "query": "has:visual action:falling",
+      "expectedTopSourceId": "local_gameplay_visual",
+      "requiredChunkTypes": ["visual"],
+      "requiresTimestamp": true,
+      "forbidVisualClaims": true,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Quoted phrase with negative term",
+      "query": "\"exact phrase\" -ignored",
+      "minResults": 0
+    },
+    {
+      "name": "Agentic collection seed",
+      "query": "Japan trip planning",
+      "expectedAnySourceIds": ["yt_japan_food_short", "article_kyoto_hotels", "note_japan_itinerary"],
+      "minResults": 3,
+      "requiresRankSignals": true
+    }
+  ]
+}

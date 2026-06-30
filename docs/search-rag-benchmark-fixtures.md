@@ -3,6 +3,26 @@
 These fixtures define the minimum scenarios Mem's Search + RAG Core should
 continue to satisfy as retrieval evolves.
 
+## Automated Eval
+
+Run the offline regression harness from the repo root:
+
+```powershell
+python tools\search_rag_eval.py
+```
+
+The harness uses `tools/search_rag_eval_fixture.json` and mirrors the current
+retrieval stack closely enough to catch regressions in query parsing, hard
+filters, timestamp requirements, visual placeholder honesty, rank signals, and
+agentic collection seed coverage. It is intentionally synthetic, so it does not
+need network access, cookies, an Android device, or a live app database.
+
+For machine-readable output:
+
+```powershell
+python tools\search_rag_eval.py --json
+```
+
 ## Fixture Set
 
 ### Transcript-Only Video Match

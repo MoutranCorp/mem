@@ -162,12 +162,16 @@ Immediate next steps:
    Started with local frame-sample visual observations for playable videos,
    indexed as `visual` chunks for `has:visual` search and future model-backed
    scene/action/OCR analysis.
-8. Harden Instagram auth with session validation, expiry messaging, and
+8. Keep retrieval quality measurable as the RAG stack changes.
+   Started with `tools/search_rag_eval.py`, an offline synthetic eval harness
+   covering transcript-only matches, semantic travel planning, deterministic
+   filters, visual placeholder honesty, and agentic collection seeds.
+9. Harden Instagram auth with session validation, expiry messaging, and
    encrypted storage.
-9. Add OCR for scanned/image-only PDFs and imported images.
-10. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
+10. Add OCR for scanned/image-only PDFs and imported images.
+11. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
    libs and pass their paths to `yt-dlp` through `ffmpeg_location`.
-11. Move long downloads to user-initiated data transfer jobs and media processing
+12. Move long downloads to user-initiated data transfer jobs and media processing
    work to a foreground service with the `mediaProcessing` type.
 
 ## Play Store Guardrails
