@@ -43,6 +43,8 @@ model used by `mobile-agent`.
   durable RAG text chunk for better search/retrieval.
 - Capture now saves non-URL text as a manual note, while shared text containing
   a URL extracts the first URL and processes it through the link adapters.
+- Text-like files can be imported from the Capture file picker or Android share
+  sheet and are stored as durable document sources with `rag_text` chunks.
 
 The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and
@@ -90,7 +92,7 @@ Immediate next steps:
 3. Expand source detail into full video/article/document layouts.
 4. Build collection detail screens and richer tag editing.
 5. Expand FTS indexing to transcript/caption chunks and richer ranking.
-6. Add PDF/text file import.
+6. Add PDF parsing on top of the text-file import path.
 7. Package real per-ABI `ffmpeg` and `ffprobe` binaries as native executable
    libs and pass their paths to `yt-dlp` through `ffmpeg_location`.
 8. Move long downloads to user-initiated data transfer jobs and media processing

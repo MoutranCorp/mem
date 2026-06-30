@@ -5,9 +5,14 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.database.Cursor
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.OpenableColumns
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedContent
@@ -142,6 +147,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
 
@@ -173,12 +179,26 @@ class MainActivity : ComponentActivity() {
         val shared = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.trim().orEmpty()
         if (shared.isNotEmpty()) {
             appState.openCapture(shared, autoExtract = true)
+            return
+        }
+        val stream = intent.streamUri()
+        if (stream != null) {
+            appState.importTextFile(stream)
         }
     }
 
     override fun onDestroy() {
         appState.close()
         super.onDestroy()
+    }
+}
+
+private fun Intent.streamUri(): Uri? {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+    } else {
+        @Suppress("DEPRECATION")
+        getParcelableExtra(Intent.EXTRA_STREAM)
     }
 }
 
@@ -372,6 +392,32 @@ private class MemAppState(
             val queued = repository.createQueuedSource(note)
             repository.markExtracting(queued.sourceId, queued.jobId)
             val result = note.toManualNoteData()
+            repository.completeExtraction(
+                sourceId = queued.sourceId,
+                jobId = queued.jobId,
+                result = result,
+            )
+            isExtracting = false
+            logOutput = result.rawMetadataJson
+        }
+    }
+
+    fun importTextFile(uri: Uri) {
+        isExtracting = true
+        selectedTab = MainTab.Capture
+        showCapture = true
+        logOutput = "Importing text file...\n\n$uri"
+        scope.launch {
+            val imported = withContext(Dispatchers.IO) { context.readSharedTextFile(uri) }
+            if (imported == null) {
+                isExtracting = false
+                logOutput = "Could not read this file as text."
+                return@launch
+            }
+            captureText = imported.text.take(1200)
+            val queued = repository.createQueuedSource(imported.stableInput)
+            repository.markExtracting(queued.sourceId, queued.jobId)
+            val result = imported.toTextFileData()
             repository.completeExtraction(
                 sourceId = queued.sourceId,
                 jobId = queued.jobId,
@@ -632,6 +678,88 @@ private fun String.toManualNoteData(): ExtractedSourceData {
     )
 }
 
+private data class ImportedTextFile(
+    val fileName: String,
+    val mimeType: String?,
+    val text: String,
+    val stableInput: String,
+)
+
+private fun Context.readSharedTextFile(uri: Uri): ImportedTextFile? {
+    val fileName = uri.displayName(this) ?: "Imported text"
+    val mimeType = contentResolver.getType(uri)
+    val bytes = contentResolver.openInputStream(uri)?.use { input ->
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0
+        while (true) {
+            val read = input.read(buffer)
+            if (read <= 0) break
+            total += read
+            if (total > MAX_TEXT_FILE_BYTES) break
+            output.write(buffer, 0, read)
+        }
+        output.toByteArray()
+    } ?: return null
+    val decoded = bytes.toString(Charsets.UTF_8)
+        .replace("\u0000", "")
+        .trim()
+    if (decoded.isBlank()) return null
+    val stableInput = "mem-file://${Uri.encode(fileName)}/${decoded.hashCode()}"
+    return ImportedTextFile(
+        fileName = fileName,
+        mimeType = mimeType,
+        text = decoded,
+        stableInput = stableInput,
+    )
+}
+
+private fun Uri.displayName(context: Context): String? {
+    var cursor: Cursor? = null
+    return try {
+        cursor = context.contentResolver.query(this, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)
+        if (cursor != null && cursor.moveToFirst()) {
+            val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+            if (index >= 0) cursor.getString(index) else null
+        } else {
+            lastPathSegment
+        }
+    } finally {
+        cursor?.close()
+    }
+}
+
+private fun ImportedTextFile.toTextFileData(): ExtractedSourceData {
+    val title = fileName.takeIf { it.isNotBlank() } ?: "Imported text"
+    val raw = JSONObject()
+        .put("ok", true)
+        .put("sourceType", "document")
+        .put("extractor", "text_file")
+        .put("title", title)
+        .put("mimeType", mimeType)
+        .put("textLength", text.length)
+        .put("textPreview", text.take(1200))
+        .toString(2)
+    return ExtractedSourceData(
+        ok = true,
+        canonicalUrl = stableInput,
+        originalUrl = stableInput,
+        sourceType = "document",
+        originDomain = null,
+        title = title,
+        author = "Imported file",
+        summary = text.take(1200),
+        thumbnailUrl = null,
+        durationSeconds = null,
+        authRequired = false,
+        error = null,
+        ragText = text,
+        rawMetadataJson = raw,
+    )
+}
+
+private const val MAX_TEXT_FILE_BYTES = 1_000_000
+
 private data class IngestionJobUi(
     val id: String,
     val sourceId: String,
@@ -695,7 +823,7 @@ private fun SourceEntity.toMemoryUi(thumbnailAsset: AssetEntity?): MemoryUi {
         icon = sourceIcon(sourceType, processingState),
         thumbnailUrl = thumbnailAsset?.remoteUrl ?: thumbnailUrl,
         durationLabel = durationSeconds?.durationLabel(),
-        openUrl = if (sourceType == "note") null else originalUrl,
+        openUrl = originalUrl.takeUnless { sourceType == "note" || it.startsWith("mem-file://") },
         localPlaybackPath = null,
         processingState = processingState,
         authState = authState,
@@ -1442,6 +1570,9 @@ private fun TimelineRow(time: String, title: String, body: String, icon: ImageVe
 
 @Composable
 private fun CaptureSheet(state: MemAppState) {
+    val textFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) state.importTextFile(uri)
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1461,7 +1592,22 @@ private fun CaptureSheet(state: MemAppState) {
         )
         Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
             CaptureType("Link", Icons.Rounded.Link, Modifier.weight(1f))
-            CaptureType("File", Icons.Rounded.UploadFile, Modifier.weight(1f))
+            CaptureType(
+                "File",
+                Icons.Rounded.UploadFile,
+                Modifier.weight(1f),
+                onClick = {
+                    textFilePicker.launch(
+                        arrayOf(
+                            "text/*",
+                            "application/json",
+                            "application/xml",
+                            "application/x-yaml",
+                            "text/markdown",
+                        ),
+                    )
+                },
+            )
             CaptureType("Voice", Icons.Rounded.Waves, Modifier.weight(1f))
             CaptureType("Note", Icons.AutoMirrored.Rounded.Article, Modifier.weight(1f))
         }
@@ -1486,8 +1632,8 @@ private fun CaptureSheet(state: MemAppState) {
 }
 
 @Composable
-private fun CaptureType(label: String, icon: ImageVector, modifier: Modifier = Modifier) {
-    SurfaceCard(modifier = modifier) {
+private fun CaptureType(label: String, icon: ImageVector, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+    SurfaceCard(modifier = if (onClick == null) modifier else modifier.clickable(onClick = onClick)) {
         Column(
             modifier = Modifier.padding(vertical = MemTokens.spacing.md),
             horizontalAlignment = Alignment.CenterHorizontally,

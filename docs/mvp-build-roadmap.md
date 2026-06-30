@@ -108,6 +108,9 @@ stores that text as a durable `rag_text` document chunk.
 Manual note capture now bypasses network extraction, saves non-URL text as a
 durable `note` source, and stores the note body as a `rag_text` chunk. Shared
 text containing a URL is normalized to the first URL before link extraction.
+Text-like file import now works from the Capture file picker and Android share
+sheet, storing imported files as durable `document` sources with `rag_text`
+chunks.
 
 Deliverables:
 
@@ -115,7 +118,7 @@ Deliverables:
 - Article metadata/readability adapter. Started with metadata fallback and
   bounded readable body extraction.
 - Manual note adapter. Started with direct text capture into durable notes.
-- PDF/text import adapter.
+- PDF/text import adapter. Started with text-like document import.
 - Image import plus OCR spike.
 - Voice note plus transcription spike.
 - Auth-gated source result type.
