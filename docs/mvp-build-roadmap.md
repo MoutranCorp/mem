@@ -67,6 +67,8 @@ first open behavior: non-downloaded sources open externally, while
 downloaded/local media is reserved for the upcoming in-app playback slice.
 The first source detail sheet is now in place, with summary, copyable source
 URL, asset/playback status, and playlist/tag actions.
+It now also surfaces stored author, duration, processing/auth state, and raw
+metadata JSON for source inspection.
 
 Deliverables:
 
@@ -85,7 +87,7 @@ Deliverables:
   membership.
 - Add durable assets. Started with remote thumbnail asset records.
 - Add source detail surface. Started with a shared detail sheet for saved
-  sources.
+  sources, then expanded with richer stored metadata.
 
 Exit criteria:
 

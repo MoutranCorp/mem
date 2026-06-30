@@ -34,6 +34,8 @@ model used by `mobile-agent`.
   matching external app/browser when available.
 - Source detail sheet for saved memories, with copyable source URL, summary,
   asset/playback status, and playlist/tag actions.
+- Source detail now surfaces author, duration, processing/auth state, and
+  selectable raw metadata JSON from the packaged extractor.
 
 The app deliberately does not advertise or perform video downloads. The first
 product path should ingest metadata, captions/transcripts where permitted, and

@@ -591,6 +591,11 @@ private data class MemoryUi(
     val openUrl: String?,
     val localPlaybackPath: String?,
     val tags: List<String>,
+    val author: String? = null,
+    val durationLabel: String? = null,
+    val processingState: String = "done",
+    val authState: String = "none",
+    val rawMetadataJson: String? = null,
 )
 
 private data class CollectionUi(
@@ -608,6 +613,7 @@ private fun SourceEntity.toMemoryUi(thumbnailAsset: AssetEntity?): MemoryUi {
         title = title,
         source = originDomain ?: author ?: "Saved source",
         type = typeLabel,
+        author = author,
         summary = summary?.takeIf { it.isNotBlank() }
             ?: when (processingState) {
                 "needs_auth" -> "This source needs explicit auth before Mem can extract full context."
@@ -618,14 +624,29 @@ private fun SourceEntity.toMemoryUi(thumbnailAsset: AssetEntity?): MemoryUi {
         time = savedAt.relativeTime(),
         icon = sourceIcon(sourceType, processingState),
         thumbnailUrl = thumbnailAsset?.remoteUrl ?: thumbnailUrl,
+        durationLabel = durationSeconds?.durationLabel(),
         openUrl = originalUrl,
         localPlaybackPath = null,
+        processingState = processingState,
+        authState = authState,
+        rawMetadataJson = rawMetadataJson,
         tags = buildList {
             add(processingState)
             if (authState == "needs_auth") add("needs auth")
             originDomain?.let { add(it) }
         }.take(3),
     )
+}
+
+private fun Long.durationLabel(): String {
+    val hours = this / 3600
+    val minutes = (this % 3600) / 60
+    val seconds = this % 60
+    return if (hours > 0) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%d:%02d".format(minutes, seconds)
+    }
 }
 
 private fun CollectionSummary.toCollectionUi(): CollectionUi {
@@ -1489,6 +1510,14 @@ private fun SourceDetailSheet(
             MetadataPill(memory.source, Icons.Rounded.Link, Modifier.weight(1f))
             MetadataPill(memory.time, Icons.Rounded.Timeline, Modifier.weight(1f))
         }
+        Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
+            memory.author?.takeIf { it.isNotBlank() }?.let {
+                MetadataPill(it, Icons.AutoMirrored.Rounded.Article, Modifier.weight(1f))
+            }
+            memory.durationLabel?.let {
+                MetadataPill(it, Icons.Rounded.PlayCircle, Modifier.weight(1f))
+            }
+        }
 
         if (memory.tags.isNotEmpty()) {
             TagRow(memory.tags)
@@ -1510,6 +1539,8 @@ private fun SourceDetailSheet(
                 verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
             ) {
                 Text("Source", color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
+                DetailRow("State", memory.processingState.displayState())
+                DetailRow("Auth", memory.authState.displayState())
                 DetailRow("URL", memory.openUrl ?: "Unavailable")
                 DetailRow(
                     "Playback",
@@ -1519,6 +1550,32 @@ private fun SourceDetailSheet(
                     "Thumbnail",
                     if (memory.thumbnailUrl.isNullOrBlank()) "Not saved" else "Saved remote asset",
                 )
+            }
+        }
+
+        memory.rawMetadataJson?.takeIf { it.isNotBlank() }?.let { metadata ->
+            SurfaceCard {
+                Column(
+                    modifier = Modifier.padding(MemTokens.spacing.md),
+                    verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
+                ) {
+                    Text("Metadata", color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
+                    SelectionContainer {
+                        Text(
+                            text = metadata,
+                            color = MemTokens.colors.textSecondary,
+                            fontSize = 12.sp,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(180.dp)
+                                .verticalScroll(rememberScrollState())
+                                .clip(MemTokens.shapes.md)
+                                .background(MemTokens.colors.surfaceMuted)
+                                .padding(MemTokens.spacing.sm),
+                        )
+                    }
+                }
             }
         }
 
@@ -1845,6 +1902,10 @@ private fun FeedItem(
                 ) {
                     Text(memory.type, color = MemTokens.colors.textSecondary, fontSize = 12.sp)
                     Text(memory.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    val meta = memory.inlineMeta()
+                    if (meta.isNotBlank()) {
+                        Text(meta, color = MemTokens.colors.textTertiary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
                 }
                 Text(memory.time, color = MemTokens.colors.textTertiary, fontSize = 12.sp)
             }
@@ -1887,10 +1948,18 @@ private fun MemoryGridCard(
             Column(modifier = Modifier.clickable { onOpenDetail(memory) }) {
                 Text(memory.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(memory.source, color = MemTokens.colors.textSecondary, fontSize = 12.sp, maxLines = 1)
+                memory.durationLabel?.let {
+                    Text(it, color = MemTokens.colors.textTertiary, fontSize = 12.sp, maxLines = 1)
+                }
             }
         }
     }
 }
+
+private fun MemoryUi.inlineMeta(): String = listOfNotNull(
+    author?.takeIf { it.isNotBlank() },
+    durationLabel,
+).joinToString(" - ")
 
 @Composable
 private fun SourceVisual(
