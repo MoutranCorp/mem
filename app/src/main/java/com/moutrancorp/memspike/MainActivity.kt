@@ -2314,9 +2314,9 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
     }
     val loginModes = remember(defaultUserAgent, mobileChromeUserAgent, desktopChromeUserAgent) {
         listOf(
+            LoginMode("Desktop", "https://www.instagram.com/accounts/login/?hl=en", desktopChromeUserAgent),
             LoginMode("Mobile", "https://www.instagram.com/accounts/login/?hl=en", mobileChromeUserAgent),
             LoginMode("Home", "https://www.instagram.com/?hl=en", mobileChromeUserAgent),
-            LoginMode("Desktop", "https://www.instagram.com/accounts/login/?hl=en", desktopChromeUserAgent),
             LoginMode("WebView", "https://www.instagram.com/accounts/login/?hl=en", defaultUserAgent),
         )
     }
@@ -2326,6 +2326,16 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
     var loadProgress by remember { mutableStateOf(0) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var pageDiagnostics by remember { mutableStateOf("Waiting for page diagnostics...") }
+    var hasInstagramSession by remember { mutableStateOf(false) }
+
+    fun refreshSessionState() {
+        val cookies = listOfNotNull(
+            CookieManager.getInstance().getCookie("https://www.instagram.com/"),
+            CookieManager.getInstance().getCookie("https://instagram.com/"),
+        ).joinToString("; ")
+        hasInstagramSession = cookies.contains("sessionid=")
+    }
+
     fun loadMode(mode: LoginMode) {
         selectedMode = mode
         loadError = null
@@ -2373,6 +2383,8 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
                             text = loadError ?: "$loadStatus ${loadProgress.coerceIn(0, 100)}%",
                             color = if (loadError == null) MemTokens.colors.textSecondary else MemTokens.colors.danger,
                             fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.weight(1f),
                         )
                         MemIconButton(Icons.Rounded.Refresh, "Reload") {
@@ -2394,11 +2406,12 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
                         }
                     }
                     Text(
-                        pageDiagnostics,
-                        color = MemTokens.colors.textTertiary,
+                        if (hasInstagramSession) "Session detected. Tap Save session." else pageDiagnostics,
+                        color = if (hasInstagramSession) MemTokens.colors.success else MemTokens.colors.textTertiary,
                         fontSize = 11.sp,
-                        maxLines = 3,
+                        maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
             }
@@ -2436,13 +2449,15 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
                             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = false
                             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
                                 loadError = null
-                                loadStatus = "Loading ${url ?: "Instagram"}"
+                                loadStatus = "Loading ${selectedMode.label}..."
+                                refreshSessionState()
                             }
 
                             override fun onPageFinished(view: WebView, url: String?) {
                                 if (loadError == null) {
-                                    loadStatus = "Loaded ${url ?: "Instagram"}"
+                                    loadStatus = "Loaded ${selectedMode.label}."
                                 }
+                                refreshSessionState()
                                 view.evaluateJavascript(
                                     """
                                     (function() {
@@ -2457,10 +2472,11 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
                                     })();
                                     """.trimIndent(),
                                 ) { result ->
-                                    pageDiagnostics = result
+                                    val cleaned = result
                                         .replace("\\\"", "\"")
                                         .replace("\\n", " ")
-                                        .take(260)
+                                        .replace(Regex("https?://[^\\s\"}]+"), "[url]")
+                                    pageDiagnostics = cleaned.take(140)
                                 }
                             }
 

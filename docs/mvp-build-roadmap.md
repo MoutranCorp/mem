@@ -128,7 +128,9 @@ Instagram auth when the current session is already working. The Instagram login
 WebView now exposes loading/error diagnostics and reload/browser controls to
 separate WebView rendering failures from Instagram auth failures. It can also
 switch between mobile, home, desktop, and default WebView login modes while
-showing DOM/console diagnostics for blank-page cases.
+showing DOM/console diagnostics for blank-page cases. Desktop login is the
+default because it renders reliably in the current Android WebView test path,
+with compact diagnostics and session-cookie detection.
 
 Deliverables:
 
