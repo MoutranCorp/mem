@@ -14,8 +14,8 @@ android {
         applicationId "com.moutrancorp.memspike"
         minSdk 24
         targetSdk 35
-        versionCode 11
-        versionName "0.3.7-rich-source-metadata"
+        versionCode 12
+        versionName "0.3.8-article-fallback"
 
         ndk {
             abiFilters "arm64-v8a"

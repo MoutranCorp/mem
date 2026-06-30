@@ -99,10 +99,16 @@ Exit criteria:
 
 Goal: turn capture into source-specific extraction.
 
+Status: started. The packaged extractor now keeps yt-dlp as the primary public
+video adapter and falls back to a stdlib article metadata adapter for ordinary
+HTML pages when yt-dlp cannot handle a URL. The fallback captures title,
+description, canonical URL, author, and Open Graph/Twitter image metadata where
+available.
+
 Deliverables:
 
 - yt-dlp adapter for public video metadata and captions.
-- Article metadata/readability adapter.
+- Article metadata/readability adapter. Started with metadata fallback.
 - Manual note adapter.
 - PDF/text import adapter.
 - Image import plus OCR spike.

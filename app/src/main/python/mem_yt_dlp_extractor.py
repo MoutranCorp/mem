@@ -2,12 +2,16 @@ import json
 import os
 import time
 import traceback
+from html.parser import HTMLParser
+from urllib.parse import urljoin
+from urllib.request import Request, urlopen
 
 import yt_dlp
 
 
 MAX_TEXT = 1200
 MAX_LIST = 30
+MAX_HTML_BYTES = 2_000_000
 
 
 def extract(url, files_dir, ffmpeg_path=""):
@@ -42,18 +46,45 @@ def extract(url, files_dir, ffmpeg_path=""):
     except Exception as exc:
         message = str(exc)
         auth_required = is_auth_required(message)
-        payload = {
-            "ok": False,
+        if auth_required:
+            payload = error_payload(url, started, exc, auth_required)
+        else:
+            payload = article_fallback_payload(url, started, exc)
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def error_payload(url, started, exc, auth_required=False):
+    return {
+        "ok": False,
+        "sourceUrl": url,
+        "ytDlpVersion": yt_dlp.version.__version__,
+        "durationMs": int((time.time() - started) * 1000),
+        "errorType": exc.__class__.__name__,
+        "error": str(exc),
+        "authRequired": auth_required,
+        "nextStep": auth_next_step() if auth_required else None,
+        "trace": traceback.format_exc(limit=4),
+    }
+
+
+def article_fallback_payload(url, started, yt_dlp_error):
+    try:
+        page = fetch_article_metadata(url)
+        page["ytDlpError"] = str(yt_dlp_error)
+        return {
+            "ok": True,
             "sourceUrl": url,
             "ytDlpVersion": yt_dlp.version.__version__,
             "durationMs": int((time.time() - started) * 1000),
-            "errorType": exc.__class__.__name__,
-            "error": message,
-            "authRequired": auth_required,
-            "nextStep": auth_next_step() if auth_required else None,
-            "trace": traceback.format_exc(limit=4),
+            "fallback": "article_metadata",
+            "ragCandidate": page,
         }
-    return json.dumps(payload, ensure_ascii=False)
+    except Exception as article_error:
+        payload = error_payload(url, started, yt_dlp_error, False)
+        payload["fallback"] = "article_metadata"
+        payload["fallbackErrorType"] = article_error.__class__.__name__
+        payload["fallbackError"] = str(article_error)
+        return payload
 
 
 def summarize(info):
@@ -116,6 +147,128 @@ def summarize_item(info):
     }
 
 
+class ArticleMetadataParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.title_parts = []
+        self.in_title = False
+        self.meta = {}
+        self.links = {}
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        attrs = {str(key).lower(): value for key, value in attrs if key}
+        if tag == "title":
+            self.in_title = True
+        elif tag == "meta":
+            key = attrs.get("property") or attrs.get("name")
+            content = attrs.get("content")
+            if key and content:
+                self.meta[key.lower()] = content.strip()
+        elif tag == "link":
+            rel = attrs.get("rel")
+            href = attrs.get("href")
+            if rel and href:
+                for part in str(rel).lower().split():
+                    self.links[part] = href.strip()
+
+    def handle_endtag(self, tag):
+        if tag.lower() == "title":
+            self.in_title = False
+
+    def handle_data(self, data):
+        if self.in_title and data:
+            self.title_parts.append(data.strip())
+
+    @property
+    def title(self):
+        return text(" ".join(part for part in self.title_parts if part))
+
+
+def fetch_article_metadata(url):
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "Mem/0.3 article metadata extractor",
+            "Accept": "text/html,application/xhtml+xml",
+        },
+    )
+    with urlopen(request, timeout=30) as response:
+        final_url = response.geturl() or url
+        content_type = response.headers.get("content-type", "")
+        if "html" not in content_type.lower():
+            raise ValueError("Article fallback only supports HTML pages")
+        raw = response.read(MAX_HTML_BYTES + 1)
+        if len(raw) > MAX_HTML_BYTES:
+            raw = raw[:MAX_HTML_BYTES]
+        charset = response.headers.get_content_charset() or "utf-8"
+
+    html = raw.decode(charset, errors="replace")
+    parser = ArticleMetadataParser()
+    parser.feed(html)
+
+    title = first_text(
+        parser.meta.get("og:title"),
+        parser.meta.get("twitter:title"),
+        parser.title,
+        final_url,
+    )
+    description = first_text(
+        parser.meta.get("og:description"),
+        parser.meta.get("twitter:description"),
+        parser.meta.get("description"),
+    )
+    author = first_text(
+        parser.meta.get("author"),
+        parser.meta.get("article:author"),
+        parser.meta.get("parsely-author"),
+    )
+    canonical_url = first_text(
+        parser.meta.get("og:url"),
+        parser.links.get("canonical"),
+        final_url,
+    )
+    thumbnail = first_text(
+        parser.meta.get("og:image"),
+        parser.meta.get("twitter:image"),
+        parser.meta.get("twitter:image:src"),
+    )
+    if canonical_url:
+        canonical_url = urljoin(final_url, canonical_url)
+    if thumbnail:
+        thumbnail = urljoin(final_url, thumbnail)
+
+    return {
+        "type": "article",
+        "title": title,
+        "descriptionPreview": description,
+        "webpageUrl": canonical_url or final_url,
+        "extractor": "article_metadata",
+        "extractorKey": "ArticleMetadata",
+        "uploader": author,
+        "channel": None,
+        "thumbnail": thumbnail,
+        "language": first_text(
+            parser.meta.get("og:locale"),
+            parser.meta.get("language"),
+        ),
+        "ragText": article_rag_text(title, author, description, canonical_url or final_url),
+    }
+
+
+def first_text(*values):
+    for value in values:
+        cleaned = text(value)
+        if cleaned:
+            return cleaned
+    return None
+
+
+def article_rag_text(title, author, description, url):
+    parts = [title, author, description, url]
+    return text("\n\n".join(part for part in parts if part), limit=2500)
+
+
 def rag_text(info, subtitle_langs, auto_caption_langs):
     parts = [
         info.get("title"),
@@ -136,7 +289,7 @@ def text(value, limit=MAX_TEXT):
     value = str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
     if len(value) <= limit:
         return value
-    return value[: limit - 1] + "…"
+    return value[: limit - 3] + "..."
 
 
 def is_auth_required(message):
