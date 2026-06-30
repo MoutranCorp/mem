@@ -103,12 +103,14 @@ Status: started. The packaged extractor now keeps yt-dlp as the primary public
 video adapter and falls back to a stdlib article metadata adapter for ordinary
 HTML pages when yt-dlp cannot handle a URL. The fallback captures title,
 description, canonical URL, author, and Open Graph/Twitter image metadata where
-available.
+available. It also extracts bounded readable body text from public HTML and
+stores that text as a durable `rag_text` document chunk.
 
 Deliverables:
 
 - yt-dlp adapter for public video metadata and captions.
-- Article metadata/readability adapter. Started with metadata fallback.
+- Article metadata/readability adapter. Started with metadata fallback and
+  bounded readable body extraction.
 - Manual note adapter.
 - PDF/text import adapter.
 - Image import plus OCR spike.

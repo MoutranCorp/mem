@@ -165,14 +165,15 @@ class MemoryRepository(private val database: MemDatabase) {
                 updatedAt = now,
             ),
         )
-        val text = listOfNotNull(result.title, result.author, result.summary).joinToString("\n\n")
+        val text = result.ragText?.takeIf { it.isNotBlank() }
+            ?: listOfNotNull(result.title, result.author, result.summary).joinToString("\n\n")
         if (text.isNotBlank()) {
             database.documentChunkDao().upsert(
                 DocumentChunkEntity(
                     id = UUID.randomUUID().toString(),
                     sourceId = sourceId,
                     text = text,
-                    chunkType = "metadata",
+                    chunkType = if (result.ragText.isNullOrBlank()) "metadata" else "rag_text",
                     startOffset = 0,
                     endOffset = text.length,
                     startTimeMs = null,
@@ -306,6 +307,7 @@ data class ExtractedSourceData(
     val durationSeconds: Long?,
     val authRequired: Boolean,
     val error: String?,
+    val ragText: String?,
     val rawMetadataJson: String,
 )
 

@@ -12,6 +12,9 @@ import yt_dlp
 MAX_TEXT = 1200
 MAX_LIST = 30
 MAX_HTML_BYTES = 2_000_000
+MAX_ARTICLE_TEXT = 12_000
+READABLE_TAGS = {"article", "main", "section", "p", "h1", "h2", "h3", "li", "blockquote"}
+SKIP_TEXT_TAGS = {"script", "style", "noscript", "svg", "nav", "footer", "form", "button"}
 
 
 def extract(url, files_dir, ffmpeg_path=""):
@@ -154,10 +157,17 @@ class ArticleMetadataParser(HTMLParser):
         self.in_title = False
         self.meta = {}
         self.links = {}
+        self.skip_depth = 0
+        self.readable_depth = 0
+        self.current_text_tag = None
+        self.current_text = []
+        self.readable_blocks = []
 
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
         attrs = {str(key).lower(): value for key, value in attrs if key}
+        if tag in SKIP_TEXT_TAGS:
+            self.skip_depth += 1
         if tag == "title":
             self.in_title = True
         elif tag == "meta":
@@ -171,18 +181,62 @@ class ArticleMetadataParser(HTMLParser):
             if rel and href:
                 for part in str(rel).lower().split():
                     self.links[part] = href.strip()
+        if tag in READABLE_TAGS:
+            self.readable_depth += 1
+            if tag not in ("article", "main", "section"):
+                self._flush_current_text()
+                self.current_text_tag = tag
 
     def handle_endtag(self, tag):
-        if tag.lower() == "title":
+        tag = tag.lower()
+        if tag == "title":
             self.in_title = False
+        if tag in SKIP_TEXT_TAGS and self.skip_depth:
+            self.skip_depth -= 1
+        if tag == self.current_text_tag:
+            self._flush_current_text()
+        if tag in READABLE_TAGS and self.readable_depth:
+            self.readable_depth -= 1
 
     def handle_data(self, data):
         if self.in_title and data:
             self.title_parts.append(data.strip())
+        if self.skip_depth == 0 and self.readable_depth > 0 and self.current_text_tag and data:
+            self.current_text.append(data)
 
     @property
     def title(self):
         return text(" ".join(part for part in self.title_parts if part))
+
+    @property
+    def readable_text(self):
+        self._flush_current_text()
+        deduped = []
+        seen = set()
+        total = 0
+        for block in self.readable_blocks:
+            normalized = normalize_space(block)
+            if len(normalized) < 40:
+                continue
+            key = normalized.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(normalized)
+            total += len(normalized)
+            if total >= MAX_ARTICLE_TEXT:
+                break
+        return text("\n\n".join(deduped), limit=MAX_ARTICLE_TEXT)
+
+    def _flush_current_text(self):
+        if not self.current_text:
+            self.current_text_tag = None
+            return
+        block = normalize_space(" ".join(self.current_text))
+        if block:
+            self.readable_blocks.append(block)
+        self.current_text = []
+        self.current_text_tag = None
 
 
 def fetch_article_metadata(url):
@@ -206,6 +260,7 @@ def fetch_article_metadata(url):
     html = raw.decode(charset, errors="replace")
     parser = ArticleMetadataParser()
     parser.feed(html)
+    readable_text = parser.readable_text
 
     title = first_text(
         parser.meta.get("og:title"),
@@ -217,6 +272,7 @@ def fetch_article_metadata(url):
         parser.meta.get("og:description"),
         parser.meta.get("twitter:description"),
         parser.meta.get("description"),
+        readable_text,
     )
     author = first_text(
         parser.meta.get("author"),
@@ -248,11 +304,13 @@ def fetch_article_metadata(url):
         "uploader": author,
         "channel": None,
         "thumbnail": thumbnail,
+        "contentText": readable_text,
+        "contentTextLength": len(readable_text or ""),
         "language": first_text(
             parser.meta.get("og:locale"),
             parser.meta.get("language"),
         ),
-        "ragText": article_rag_text(title, author, description, canonical_url or final_url),
+        "ragText": article_rag_text(title, author, description, readable_text, canonical_url or final_url),
     }
 
 
@@ -264,8 +322,8 @@ def first_text(*values):
     return None
 
 
-def article_rag_text(title, author, description, url):
-    parts = [title, author, description, url]
+def article_rag_text(title, author, description, readable_text, url):
+    parts = [title, author, description, readable_text, url]
     return text("\n\n".join(part for part in parts if part), limit=2500)
 
 
@@ -290,6 +348,10 @@ def text(value, limit=MAX_TEXT):
     if len(value) <= limit:
         return value
     return value[: limit - 3] + "..."
+
+
+def normalize_space(value):
+    return " ".join(str(value).split())
 
 
 def is_auth_required(message):

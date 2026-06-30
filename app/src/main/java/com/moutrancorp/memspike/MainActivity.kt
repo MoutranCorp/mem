@@ -488,6 +488,7 @@ private class YtDlpExtractor(private val activity: Activity) {
                 durationSeconds = null,
                 authRequired = false,
                 error = "${t::class.java.simpleName}: ${t.message}",
+                ragText = null,
                 prettyText = "Extraction failed:\n${t::class.java.simpleName}: ${t.message}",
             )
         }
@@ -512,6 +513,7 @@ private data class ExtractionResult(
     val durationSeconds: Long?,
     val authRequired: Boolean,
     val error: String?,
+    val ragText: String?,
     val prettyText: String,
 ) {
     fun toExtractedSourceData(input: String): ExtractedSourceData {
@@ -529,6 +531,7 @@ private data class ExtractionResult(
             durationSeconds = durationSeconds,
             authRequired = authRequired,
             error = error,
+            ragText = ragText,
             rawMetadataJson = prettyText,
         )
     }
@@ -556,6 +559,7 @@ private data class ExtractionResult(
                 durationSeconds = candidate?.optLong("durationSeconds")?.takeIf { it > 0 },
                 authRequired = root.optBoolean("authRequired", false),
                 error = root.optString("error").takeIf { it.isNotBlank() },
+                ragText = candidate?.optString("ragText")?.takeIf { it.isNotBlank() },
                 prettyText = pretty,
             )
         }
