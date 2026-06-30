@@ -168,6 +168,9 @@ Immediate next steps:
    The app now persists `embedding_jobs`, counts missing/stale chunk embeddings,
    and exposes a settings repair action that enqueues and drains local
    re-embedding work through the same provider/vector-index boundary.
+   Deterministic ordering now supports `sort:newest`, `sort:oldest`,
+   `sort:shortest`, `sort:longest`, and `sort:complete` after retrieval
+   fusion, so non-LLM search can rank by date, duration, or index depth.
 6. Add the first agent search tool with cited results and action previews.
    Started with a local agent search panel that summarizes grounded citations
    and can draft a collection from the cited source set. Collection drafts now

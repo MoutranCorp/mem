@@ -88,6 +88,9 @@ Queries:
 - `has:local_video`
 - `has:thumbnail type:video`
 - `"exact phrase" -ignored`
+- `japan sort:newest`
+- `type:video sort:shortest`
+- `type:video sort:complete`
 
 Expected:
 
@@ -105,6 +108,9 @@ Expected:
   recency, filter, provider/model, vector index, and hybrid behavior.
 - Nearby timestamped chunks from the same source and chunk type should collapse
   to the strongest citation, with a rank signal showing the nearby-dedupe path.
+- Sort tokens should apply after retrieval fusion and hard filters, supporting
+  newest/oldest saved date, shortest/longest duration, and most-complete index
+  depth.
 
 ### Visual Memory Placeholder
 

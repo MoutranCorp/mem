@@ -327,8 +327,10 @@ Exit criteria:
    chunks from the same source/chunk type, matching the research path's
    source/time dedupe requirement. The app now also persists `embedding_jobs`
    and exposes a local repair path for missing/stale chunk embeddings, preparing
-   for provider/model changes. A production local/cloud embedding provider and
-   approximate vector index remain.
+   for provider/model changes. Deterministic query sorting now supports newest,
+   oldest, shortest, longest, and most-complete ordering after retrieval fusion.
+   A production local/cloud embedding provider and approximate vector index
+   remain.
 6. Implement the first agent tool set: search memory, get source/chunks, and
    draft collection/playlist actions with preview/undo. Started with
    search-generated collection drafts backed by `agent_actions`, preview,

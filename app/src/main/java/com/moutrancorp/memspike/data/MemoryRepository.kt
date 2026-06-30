@@ -378,7 +378,7 @@ class MemoryRepository(private val database: MemDatabase) {
                 )
             }
         }
-        return byChunk.values.sortedByDescending { it.rankScore }
+        return parsed.sortResults(byChunk.values)
     }
 
     suspend fun chunksForSource(sourceId: String, limit: Int = 80): List<ContentChunkData> {
@@ -2016,6 +2016,7 @@ private data class ParsedSearchQuery(
     val durationRanges: List<LongRange>,
     val savedRanges: List<LongRange>,
     val dateRanges: List<LongRange>,
+    val sortMode: String?,
 ) {
     fun matches(result: SearchResultData, filterContext: SearchFilterContext): Boolean {
         val haystack = result.searchHaystack()
@@ -2062,7 +2063,19 @@ private data class ParsedSearchQuery(
             durationRanges.isNotEmpty() ||
             savedRanges.isNotEmpty() ||
             dateRanges.isNotEmpty() ||
+            sortMode != null ||
             negativeTerms.isNotEmpty()
+    }
+
+    fun sortResults(results: Collection<SearchResultData>): List<SearchResultData> {
+        return when (sortMode) {
+            "newest" -> results.sortedWith(compareByDescending<SearchResultData> { it.savedAt }.thenByDescending { it.rankScore })
+            "oldest" -> results.sortedWith(compareBy<SearchResultData> { it.savedAt }.thenByDescending { it.rankScore })
+            "shortest" -> results.sortedWith(compareBy<SearchResultData> { it.durationSeconds ?: Long.MAX_VALUE }.thenByDescending { it.rankScore })
+            "longest" -> results.sortedWith(compareByDescending<SearchResultData> { it.durationSeconds ?: Long.MIN_VALUE }.thenByDescending { it.rankScore })
+            "complete", "most_complete" -> results.sortedWith(compareByDescending<SearchResultData> { it.contentDepthScore() }.thenByDescending { it.rankScore })
+            else -> results.sortedByDescending { it.rankScore }
+        }
     }
 
     fun rankBoost(result: SearchResultData, filterContext: SearchFilterContext): Float {
@@ -2106,6 +2119,7 @@ private data class ParsedSearchQuery(
             .put("durationRanges", JSONArray(durationRanges.map { "${it.first}..${it.last}" }))
             .put("savedRanges", JSONArray(savedRanges.map { "${it.first}..${it.last}" }))
             .put("dateRanges", JSONArray(dateRanges.map { "${it.first}..${it.last}" }))
+            .put("sortMode", sortMode)
             .toString()
     }
 }
@@ -2133,6 +2147,7 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
     val durationRanges = mutableListOf<LongRange>()
     val savedRanges = mutableListOf<LongRange>()
     val dateRanges = mutableListOf<LongRange>()
+    var sortMode: String? = null
     val phrases = Regex("\"([^\"]+)\"")
         .findAll(query)
         .mapNotNull { it.groupValues.getOrNull(1)?.trim()?.takeIf(String::isNotBlank) }
@@ -2173,6 +2188,7 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
                     "duration" -> parseDurationRange(value)?.let(durationRanges::add)
                     "saved" -> parseDateRange(value)?.let(savedRanges::add)
                     "date" -> parseDateRange(value)?.let(dateRanges::add)
+                    "sort", "order" -> sortMode = normalizeSortMode(value)
                     else -> freeTerms.add(value)
                 }
             } else {
@@ -2197,6 +2213,7 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
         durationRanges = durationRanges,
         savedRanges = savedRanges,
         dateRanges = dateRanges,
+        sortMode = sortMode,
     )
 }
 
@@ -2337,6 +2354,18 @@ private fun normalizeTypeFilter(value: String): String {
     }
 }
 
+private fun normalizeSortMode(value: String): String? {
+    return when (value.trim().lowercase(Locale.US).replace("-", "_")) {
+        "relevance", "relevant", "rank", "score" -> "relevance"
+        "new", "newest", "recent", "saved_desc" -> "newest"
+        "old", "oldest", "saved_asc" -> "oldest"
+        "short", "shortest", "duration_asc" -> "shortest"
+        "long", "longest", "duration_desc" -> "longest"
+        "complete", "most_complete", "content_depth", "depth" -> "complete"
+        else -> null
+    }
+}
+
 private fun SearchResultData.searchHaystack(): String {
     return listOfNotNull(
         title,
@@ -2351,6 +2380,19 @@ private fun SearchResultData.searchHaystack(): String {
         matchReason,
         retrievalMode,
     ).joinToString(" ").lowercase(Locale.US)
+}
+
+private fun SearchResultData.contentDepthScore(): Int {
+    return when (contentDepth) {
+        "transcript_visual" -> 7
+        "transcript" -> 6
+        "visual" -> 5
+        "article", "document", "note" -> 4
+        "indexed" -> 3
+        "metadata_only" -> 2
+        "auth_required" -> 1
+        else -> 0
+    } + if (startTimeMs != null) 1 else 0
 }
 
 private fun SearchResultData.isNearbyDuplicateOf(other: SearchResultData): Boolean {

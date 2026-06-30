@@ -295,6 +295,29 @@
       "requiresRankSignals": true
     },
     {
+      "name": "Newest deterministic sort",
+      "query": "japan sort:newest",
+      "expectedSort": "newest",
+      "minResults": 3,
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Shortest deterministic sort",
+      "query": "type:video sort:shortest",
+      "expectedTopSourceId": "local_gameplay_visual",
+      "expectedSort": "shortest",
+      "allResultsSourceType": "video",
+      "requiresRankSignals": true
+    },
+    {
+      "name": "Most complete deterministic sort",
+      "query": "type:video sort:complete",
+      "expectedTopSourceId": "local_gameplay_visual",
+      "expectedSort": "complete",
+      "allResultsSourceType": "video",
+      "requiresRankSignals": true
+    },
+    {
       "name": "Duration and saved range filter",
       "query": "type:video duration:<5m saved:last30d",
       "expectedAnySourceIds": ["yt_japan_food_short", "local_gameplay_visual"],

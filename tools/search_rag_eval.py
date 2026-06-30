@@ -60,6 +60,7 @@ class ParsedQuery:
     duration_ranges: list[range]
     saved_ranges: list[range]
     date_ranges: list[range]
+    sort_mode: str | None
 
     def has_structured_filters(self) -> bool:
         return any(
@@ -77,6 +78,7 @@ class ParsedQuery:
                 self.duration_ranges,
                 self.saved_ranges,
                 self.date_ranges,
+                self.sort_mode,
                 self.negative_terms,
             ],
         )
@@ -181,6 +183,7 @@ def parse_query(query: str) -> ParsedQuery:
     duration_ranges: list[range] = []
     saved_ranges: list[range] = []
     date_ranges: list[range] = []
+    sort_mode: str | None = None
 
     for raw in re.split(r"\s+", without_phrases.strip()):
         if not raw:
@@ -239,6 +242,8 @@ def parse_query(query: str) -> ParsedQuery:
             parsed = parse_date_range(value)
             if parsed:
                 date_ranges.append(parsed)
+        elif key in {"sort", "order"}:
+            sort_mode = normalize_sort_mode(value)
         else:
             free_terms.append(value)
 
@@ -260,6 +265,7 @@ def parse_query(query: str) -> ParsedQuery:
         duration_ranges=duration_ranges,
         saved_ranges=saved_ranges,
         date_ranges=date_ranges,
+        sort_mode=sort_mode,
     )
 
 
@@ -274,6 +280,33 @@ def normalize_type_filter(value: str) -> str:
         "images": "image",
     }
     return aliases.get(value, value)
+
+
+def normalize_sort_mode(value: str) -> str | None:
+    aliases = {
+        "relevance": "relevance",
+        "relevant": "relevance",
+        "rank": "relevance",
+        "score": "relevance",
+        "new": "newest",
+        "newest": "newest",
+        "recent": "newest",
+        "saved_desc": "newest",
+        "old": "oldest",
+        "oldest": "oldest",
+        "saved_asc": "oldest",
+        "short": "shortest",
+        "shortest": "shortest",
+        "duration_asc": "shortest",
+        "long": "longest",
+        "longest": "longest",
+        "duration_desc": "longest",
+        "complete": "complete",
+        "most_complete": "complete",
+        "content_depth": "complete",
+        "depth": "complete",
+    }
+    return aliases.get(value.strip().lower().replace("-", "_"))
 
 
 def parse_duration_range(value: str) -> range | None:
@@ -521,7 +554,37 @@ def search(chunks: list[Chunk], query: str) -> list[Result]:
         )
         add_result(results, parsed, result, index)
 
-    return sorted(results.values(), key=lambda item: item.score, reverse=True)[:40]
+    return sort_results(list(results.values()), parsed)[:40]
+
+
+def sort_results(results: list[Result], parsed: ParsedQuery) -> list[Result]:
+    if parsed.sort_mode == "newest":
+        return sorted(results, key=lambda item: (item.chunk.saved_at, item.score), reverse=True)
+    if parsed.sort_mode == "oldest":
+        return sorted(results, key=lambda item: (item.chunk.saved_at, -item.score))
+    if parsed.sort_mode == "shortest":
+        return sorted(results, key=lambda item: (item.chunk.duration_seconds if item.chunk.duration_seconds is not None else sys.maxsize, -item.score))
+    if parsed.sort_mode == "longest":
+        return sorted(results, key=lambda item: (item.chunk.duration_seconds if item.chunk.duration_seconds is not None else -1, item.score), reverse=True)
+    if parsed.sort_mode == "complete":
+        return sorted(results, key=lambda item: (content_depth_score(item.chunk), item.score), reverse=True)
+    return sorted(results, key=lambda item: item.score, reverse=True)
+
+
+def content_depth_score(chunk: Chunk) -> int:
+    depth = content_depth_for_chunk(chunk)
+    scores = {
+        "transcript_visual": 7,
+        "transcript": 6,
+        "visual": 5,
+        "article": 4,
+        "document": 4,
+        "note": 4,
+        "indexed": 3,
+        "metadata_only": 2,
+        "auth_required": 1,
+    }
+    return scores.get(depth, 0) + (1 if chunk.start_time_ms is not None else 0)
 
 
 def add_result(results: dict[str, Result], parsed: ParsedQuery, result: Result, index: int) -> None:
@@ -654,6 +717,19 @@ def check_expectations(query: dict[str, Any], results: list[Result]) -> list[str
             failures.append(f"nearby source/chunk-type dedupe leaked duplicates: {leaked}")
     if query.get("requiresNearbyDedupeSignal") and not any("nearbyDeduped=true" in result.rank_signals for result in results):
         failures.append("missing nearby dedupe rank signal")
+    sort_order = query.get("expectedSort")
+    if sort_order == "newest":
+        saved = [result.chunk.saved_at for result in results]
+        if saved != sorted(saved, reverse=True):
+            failures.append("results are not sorted newest first")
+    elif sort_order == "shortest":
+        durations = [result.chunk.duration_seconds for result in results if result.chunk.duration_seconds is not None]
+        if durations != sorted(durations):
+            failures.append("results are not sorted shortest first")
+    elif sort_order == "complete":
+        scores = [content_depth_score(result.chunk) for result in results]
+        if scores != sorted(scores, reverse=True):
+            failures.append("results are not sorted by content completeness")
     if len(results) < query.get("minResults", 1):
         failures.append(f"expected at least {query.get('minResults', 1)} results, got {len(results)}")
     return failures
