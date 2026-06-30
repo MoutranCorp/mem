@@ -149,6 +149,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.security.MessageDigest
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
@@ -406,8 +407,29 @@ private class MemAppState(
         isExtracting = true
         selectedTab = MainTab.Capture
         showCapture = true
-        logOutput = "Importing text file...\n\n$uri"
+        logOutput = "Importing file...\n\n$uri"
         scope.launch {
+            if (context.isPdfUri(uri)) {
+                val importedPdf = withContext(Dispatchers.IO) { context.copySharedPdfFile(uri) }
+                if (importedPdf == null) {
+                    isExtracting = false
+                    logOutput = "Could not read this PDF."
+                    return@launch
+                }
+                captureText = importedPdf.fileName
+                val queued = repository.createQueuedSource(importedPdf.stableInput)
+                repository.markExtracting(queued.sourceId, queued.jobId)
+                val result = extractor.extractPdf(importedPdf.file, importedPdf.fileName, importedPdf.stableInput)
+                repository.completeExtraction(
+                    sourceId = queued.sourceId,
+                    jobId = queued.jobId,
+                    result = result,
+                )
+                isExtracting = false
+                logOutput = result.rawMetadataJson
+                return@launch
+            }
+
             val imported = withContext(Dispatchers.IO) { context.readSharedTextFile(uri) }
             if (imported == null) {
                 isExtracting = false
@@ -568,6 +590,42 @@ private class YtDlpExtractor(private val activity: Activity) {
         val candidate = File(nativeLibDir, "lib$name.so")
         return if (candidate.exists() && candidate.canExecute()) candidate.absolutePath else ""
     }
+
+    suspend fun extractPdf(file: File, displayName: String, stableInput: String): ExtractedSourceData = withContext(Dispatchers.IO) {
+        try {
+            if (!Python.isStarted()) {
+                Python.start(AndroidPlatform(activity))
+            }
+            val py = Python.getInstance()
+            val extractor = py.getModule("mem_pdf_extractor")
+            val raw: PyObject = extractor.callAttr("extract", file.absolutePath, displayName)
+            pdfDataFromJson(raw.toString(), stableInput, displayName)
+        } catch (t: Throwable) {
+            val raw = JSONObject()
+                .put("ok", false)
+                .put("sourceType", "pdf")
+                .put("extractor", "pypdf")
+                .put("title", displayName)
+                .put("error", "${t::class.java.simpleName}: ${t.message}")
+                .toString(2)
+            ExtractedSourceData(
+                ok = false,
+                canonicalUrl = stableInput,
+                originalUrl = stableInput,
+                sourceType = "pdf",
+                originDomain = null,
+                title = displayName,
+                author = "Imported PDF",
+                summary = "PDF extraction failed: ${t.message}",
+                thumbnailUrl = null,
+                durationSeconds = null,
+                authRequired = false,
+                error = "${t::class.java.simpleName}: ${t.message}",
+                ragText = null,
+                rawMetadataJson = raw,
+            )
+        }
+    }
 }
 
 private data class ExtractionResult(
@@ -678,10 +736,48 @@ private fun String.toManualNoteData(): ExtractedSourceData {
     )
 }
 
+private fun pdfDataFromJson(json: String, stableInput: String, fallbackTitle: String): ExtractedSourceData {
+    val root = JSONObject(json)
+    val pretty = try {
+        root.toString(2)
+    } catch (_: Exception) {
+        json
+    }
+    val title = root.optString("title").takeIf { it.isNotBlank() } ?: fallbackTitle
+    val author = root.optString("author").takeIf { it.isNotBlank() } ?: "Imported PDF"
+    val ragText = root.optString("ragText").takeIf { it.isNotBlank() }
+    val summary = root.optString("descriptionPreview").takeIf { it.isNotBlank() }
+        ?: ragText?.take(1200)
+        ?: "PDF imported. No embedded text was extracted."
+    return ExtractedSourceData(
+        ok = root.optBoolean("ok", false),
+        canonicalUrl = stableInput,
+        originalUrl = stableInput,
+        sourceType = "pdf",
+        originDomain = null,
+        title = title,
+        author = author,
+        summary = summary,
+        thumbnailUrl = null,
+        durationSeconds = null,
+        authRequired = false,
+        error = root.optString("error").takeIf { it.isNotBlank() },
+        ragText = ragText,
+        rawMetadataJson = pretty,
+    )
+}
+
 private data class ImportedTextFile(
     val fileName: String,
     val mimeType: String?,
     val text: String,
+    val stableInput: String,
+)
+
+private data class ImportedPdfFile(
+    val fileName: String,
+    val mimeType: String?,
+    val file: File,
     val stableInput: String,
 )
 
@@ -710,6 +806,47 @@ private fun Context.readSharedTextFile(uri: Uri): ImportedTextFile? {
         fileName = fileName,
         mimeType = mimeType,
         text = decoded,
+        stableInput = stableInput,
+    )
+}
+
+private fun Context.isPdfUri(uri: Uri): Boolean {
+    val fileName = uri.displayName(this).orEmpty()
+    val mimeType = contentResolver.getType(uri).orEmpty()
+    return mimeType.equals("application/pdf", ignoreCase = true) || fileName.endsWith(".pdf", ignoreCase = true)
+}
+
+private fun Context.copySharedPdfFile(uri: Uri): ImportedPdfFile? {
+    val fileName = uri.displayName(this) ?: "Imported PDF.pdf"
+    val mimeType = contentResolver.getType(uri)
+    val importsDir = File(cacheDir, "mem-imports").apply { mkdirs() }
+    val target = File(importsDir, "${UUID.randomUUID()}.pdf")
+    val digest = MessageDigest.getInstance("SHA-256")
+    val total = contentResolver.openInputStream(uri)?.use { input ->
+        target.outputStream().use { output ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var totalBytes = 0
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                totalBytes += read
+                if (totalBytes > MAX_PDF_FILE_BYTES) {
+                    target.delete()
+                    return null
+                }
+                digest.update(buffer, 0, read)
+                output.write(buffer, 0, read)
+            }
+            totalBytes
+        }
+    } ?: return null
+    if (total <= 0) return null
+    val hash = digest.digest().joinToString("") { "%02x".format(it) }
+    val stableInput = "mem-file://${Uri.encode(fileName)}/$hash"
+    return ImportedPdfFile(
+        fileName = fileName,
+        mimeType = mimeType,
+        file = target,
         stableInput = stableInput,
     )
 }
@@ -759,6 +896,7 @@ private fun ImportedTextFile.toTextFileData(): ExtractedSourceData {
 }
 
 private const val MAX_TEXT_FILE_BYTES = 1_000_000
+private const val MAX_PDF_FILE_BYTES = 20_000_000
 
 private data class IngestionJobUi(
     val id: String,
@@ -1600,6 +1738,7 @@ private fun CaptureSheet(state: MemAppState) {
                     textFilePicker.launch(
                         arrayOf(
                             "text/*",
+                            "application/pdf",
                             "application/json",
                             "application/xml",
                             "application/x-yaml",

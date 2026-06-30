@@ -111,6 +111,8 @@ text containing a URL is normalized to the first URL before link extraction.
 Text-like file import now works from the Capture file picker and Android share
 sheet, storing imported files as durable `document` sources with `rag_text`
 chunks.
+PDF import now uses packaged `pypdf` to extract embedded text from imported or
+shared PDFs, storing successful extraction output as durable `rag_text`.
 
 Deliverables:
 
@@ -118,7 +120,8 @@ Deliverables:
 - Article metadata/readability adapter. Started with metadata fallback and
   bounded readable body extraction.
 - Manual note adapter. Started with direct text capture into durable notes.
-- PDF/text import adapter. Started with text-like document import.
+- PDF/text import adapter. Started with text-like document import and embedded
+  PDF text extraction.
 - Image import plus OCR spike.
 - Voice note plus transcription spike.
 - Auth-gated source result type.
