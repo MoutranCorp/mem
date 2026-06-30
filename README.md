@@ -118,6 +118,7 @@ The production direction is documented in:
 - `docs/design-system-customization.md`
 - `docs/mvp-build-roadmap.md`
 - `docs/rag-agent-spike-2026-06-30.md`
+- `docs/search-rag-benchmark-fixtures.md`
 
 Immediate next steps:
 
@@ -145,7 +146,8 @@ Immediate next steps:
    fusion in cited search results.
 6. Add the first agent search tool with cited results and action previews.
    Started with a local agent search panel that summarizes grounded citations
-   and can draft a collection from the cited source set.
+   and can draft a collection from the cited source set. Collection drafts now
+   create auditable agent action records with preview, apply, and undo.
 7. Build visual indexing for local/authorized videos so Mem can answer queries
    about what happens visually, not only what is spoken.
 8. Harden Instagram auth with session validation, expiry messaging, and

@@ -300,6 +300,8 @@ Exit criteria:
    keyword/semantic result fusion. A production local/cloud embedding provider
    and approximate vector index remain.
 6. Implement the first agent tool set: search memory, get source/chunks, and
-   draft collection/playlist actions with preview/undo.
+   draft collection/playlist actions with preview/undo. Started with
+   search-generated collection drafts backed by `agent_actions`, preview,
+   apply, and undo.
 7. Add visual observations for local/authorized videos so Mem can answer visual
    event queries that transcripts cannot cover.

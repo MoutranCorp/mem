@@ -159,6 +159,7 @@ import androidx.media3.ui.PlayerView
 import com.moutrancorp.memspike.data.AssetEntity
 import com.moutrancorp.memspike.data.CollectionSummary
 import com.moutrancorp.memspike.data.ContentChunkData
+import com.moutrancorp.memspike.data.AgentActionDraft
 import com.moutrancorp.memspike.data.ExtractedSourceData
 import com.moutrancorp.memspike.data.ExtractedCaptionTrack
 import com.moutrancorp.memspike.data.ExtractedContentChunk
@@ -355,6 +356,8 @@ private class MemAppState(
     var authorizedSaveMemory by mutableStateOf<MemoryUi?>(null)
         private set
     var instagramAuthMemory by mutableStateOf<MemoryUi?>(null)
+        private set
+    var pendingAgentAction by mutableStateOf<AgentActionUi?>(null)
         private set
     var isExtracting by mutableStateOf(false)
     var logOutput by mutableStateOf("Ready. Share or paste a link to extract metadata on-device.")
@@ -588,10 +591,45 @@ private class MemAppState(
         }
         scope.launch {
             val title = "Search: ${query.take(42)}"
-            sourceIds.forEach { sourceId -> repository.addSourceToCollection(sourceId, title) }
-            logOutput = "Created collection draft \"$title\" with ${sourceIds.size} cited source${if (sourceIds.size == 1) "" else "s"}."
-            Toast.makeText(context, "Collection draft created", Toast.LENGTH_SHORT).show()
+            val draft = repository.createCollectionDraft(
+                title = title,
+                query = query,
+                sourceIds = sourceIds,
+                rationale = "Create a collection from the current cited search result set.",
+            )
+            pendingAgentAction = draft.toAgentActionUi()
+            logOutput = "Prepared collection draft \"$title\" with ${sourceIds.size} cited source${if (sourceIds.size == 1) "" else "s"}."
         }
+    }
+
+    fun confirmAgentAction() {
+        val action = pendingAgentAction ?: return
+        scope.launch {
+            val applied = repository.applyCollectionDraft(action.id)
+            pendingAgentAction = applied?.toAgentActionUi()
+            logOutput = if (applied?.state == "applied") {
+                "Applied ${applied.title}. Undo is available from the preview."
+            } else {
+                "Could not apply ${action.title}."
+            }
+        }
+    }
+
+    fun undoAgentAction() {
+        val action = pendingAgentAction ?: return
+        scope.launch {
+            val undone = repository.undoCollectionDraft(action.id)
+            pendingAgentAction = undone?.toAgentActionUi()
+            logOutput = if (undone?.state == "undone") {
+                "Undid ${undone.title}."
+            } else {
+                "Could not undo ${action.title}."
+            }
+        }
+    }
+
+    fun dismissAgentAction() {
+        pendingAgentAction = null
     }
 
     fun tagForReview(memory: MemoryUi) {
@@ -1661,6 +1699,26 @@ private data class CollectionUi(
     val updatedAt: Long,
 )
 
+private data class AgentActionUi(
+    val id: String,
+    val title: String,
+    val actionType: String,
+    val state: String,
+    val rationale: String,
+    val sourceCount: Int,
+)
+
+private fun AgentActionDraft.toAgentActionUi(): AgentActionUi {
+    return AgentActionUi(
+        id = id,
+        title = title,
+        actionType = actionType,
+        state = state,
+        rationale = rationale,
+        sourceCount = sourceCount,
+    )
+}
+
 private data class SearchResultUi(
     val sourceId: String,
     val chunkId: String,
@@ -2154,6 +2212,15 @@ private fun MemScaffold(state: MemAppState) {
             memory = memory,
             onCancel = state::closeAuthorizedSave,
             onConfirm = state::confirmAuthorizedSave,
+        )
+    }
+
+    state.pendingAgentAction?.let { action ->
+        AgentActionPreviewSheet(
+            action = action,
+            onConfirm = state::confirmAgentAction,
+            onUndo = state::undoAgentAction,
+            onDismiss = state::dismissAgentAction,
         )
     }
 }
@@ -3381,6 +3448,77 @@ private fun AuthorizedSaveScreen(memory: MemoryUi, onCancel: () -> Unit, onConfi
                             onClick = onConfirm,
                             modifier = Modifier.weight(1f),
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AgentActionPreviewSheet(
+    action: AgentActionUi,
+    onConfirm: () -> Unit,
+    onUndo: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .background(Color.Black.copy(alpha = 0.24f)),
+        color = Color.Transparent,
+        contentColor = MemTokens.colors.textPrimary,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(MemTokens.spacing.lg),
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            SurfaceCard(modifier = Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.padding(MemTokens.spacing.lg),
+                    verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.md),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconBadge(Icons.Rounded.AutoAwesome, MemTokens.colors.accentMuted, MemTokens.colors.accent)
+                        Spacer(modifier = Modifier.width(MemTokens.spacing.md))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Action preview", color = MemTokens.colors.textPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                            Text(action.state.displayState(), color = MemTokens.colors.textSecondary, fontSize = 13.sp)
+                        }
+                        MemIconButton(Icons.Rounded.Close, "Close", onDismiss)
+                    }
+                    SurfaceCard(container = MemTokens.colors.surfaceMuted) {
+                        Column(
+                            modifier = Modifier.padding(MemTokens.spacing.md),
+                            verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs),
+                        ) {
+                            Text(action.title, color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
+                            Text(action.rationale, color = MemTokens.colors.textSecondary, fontSize = 14.sp, lineHeight = 20.sp)
+                            DetailRow("Action", action.actionType.replace("_", " "))
+                            DetailRow("Sources", "${action.sourceCount}")
+                        }
+                    }
+                    when (action.state) {
+                        "draft" -> PrimaryButton(
+                            label = "Apply action",
+                            icon = Icons.Rounded.CheckCircle,
+                            onClick = onConfirm,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        "applied" -> OutlinedButton(
+                            onClick = onUndo,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = MemTokens.shapes.pill,
+                        ) {
+                            Icon(Icons.Rounded.RestartAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
+                            Text("Undo action")
+                        }
+                        "undone" -> Text("This action has been undone.", color = MemTokens.colors.textSecondary, fontSize = 14.sp)
                     }
                 }
             }

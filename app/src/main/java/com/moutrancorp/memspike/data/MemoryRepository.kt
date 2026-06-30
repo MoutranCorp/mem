@@ -16,6 +16,8 @@ import java.security.MessageDigest
 import kotlin.math.sqrt
 import java.util.Locale
 import java.util.UUID
+import org.json.JSONArray
+import org.json.JSONObject
 
 private const val LOCAL_EMBEDDING_MODEL_ID = "local_hash_v1_text_128"
 private const val LOCAL_EMBEDDING_PROVIDER = "local"
@@ -74,7 +76,17 @@ class MemoryRepository(private val database: MemDatabase) {
             }
         }
         val semanticResults = semanticSearch(rawQuery, 60)
-        return fuseSearchResults(ftsResults, semanticResults).take(40)
+        val fused = fuseSearchResults(ftsResults, semanticResults).take(40)
+        database.searchQueryDao().insert(
+            SearchQueryEntity(
+                id = UUID.randomUUID().toString(),
+                query = rawQuery,
+                parsedFiltersJson = parsedSearchJson(rawQuery),
+                resultCount = fused.size,
+                createdAt = System.currentTimeMillis(),
+            ),
+        )
+        return fused
     }
 
     private suspend fun semanticSearch(rawQuery: String, limit: Int): List<SearchResultData> {
@@ -358,6 +370,63 @@ class MemoryRepository(private val database: MemDatabase) {
                 addedAt = now,
             ),
         )
+    }
+
+    suspend fun createCollectionDraft(title: String, query: String, sourceIds: List<String>, rationale: String): AgentActionDraft {
+        val now = System.currentTimeMillis()
+        val distinctIds = sourceIds.distinct()
+        val preview = JSONObject()
+            .put("title", title)
+            .put("query", query)
+            .put("sourceIds", JSONArray(distinctIds))
+            .put("sourceCount", distinctIds.size)
+            .toString()
+        val action = AgentActionEntity(
+            id = UUID.randomUUID().toString(),
+            actionType = "create_collection",
+            state = "draft",
+            title = title,
+            rationale = rationale,
+            previewJson = preview,
+            undoPayloadJson = null,
+            createdAt = now,
+            appliedAt = null,
+            undoneAt = null,
+        )
+        database.agentActionDao().upsert(action)
+        return action.toDraft()
+    }
+
+    suspend fun applyCollectionDraft(actionId: String): AgentActionDraft? {
+        val action = database.agentActionDao().findById(actionId) ?: return null
+        if (action.state != "draft") return action.toDraft()
+        val preview = JSONObject(action.previewJson)
+        val title = preview.optString("title").takeIf { it.isNotBlank() } ?: action.title
+        val sourceIds = preview.optJSONArray("sourceIds").orEmptyStrings()
+        sourceIds.forEach { sourceId -> addSourceToCollection(sourceId, title) }
+        val now = System.currentTimeMillis()
+        val undo = JSONObject()
+            .put("collectionTitle", title)
+            .put("sourceIds", JSONArray(sourceIds))
+            .toString()
+        val applied = action.copy(state = "applied", undoPayloadJson = undo, appliedAt = now)
+        database.agentActionDao().upsert(applied)
+        return applied.toDraft()
+    }
+
+    suspend fun undoCollectionDraft(actionId: String): AgentActionDraft? {
+        val action = database.agentActionDao().findById(actionId) ?: return null
+        if (action.state != "applied" || action.undoPayloadJson.isNullOrBlank()) return action.toDraft()
+        val undo = JSONObject(action.undoPayloadJson)
+        val title = undo.optString("collectionTitle")
+        val sourceIds = undo.optJSONArray("sourceIds").orEmptyStrings()
+        val collection = database.collectionDao().findByTitle(title)
+        if (collection != null) {
+            sourceIds.forEach { sourceId -> database.collectionDao().deleteCollectionSource(collection.id, sourceId) }
+        }
+        val undone = action.copy(state = "undone", undoneAt = System.currentTimeMillis())
+        database.agentActionDao().upsert(undone)
+        return undone.toDraft()
     }
 
     suspend fun tagSource(sourceId: String, tagName: String = "review") {
@@ -755,6 +824,15 @@ data class ContentChunkData(
     val provider: String?,
 )
 
+data class AgentActionDraft(
+    val id: String,
+    val title: String,
+    val actionType: String,
+    val state: String,
+    val rationale: String,
+    val sourceCount: Int,
+)
+
 data class SourceSnapshot(
     val source: SourceEntity,
     val assets: List<AssetEntity>,
@@ -942,6 +1020,36 @@ private fun toFtsQuery(query: String): String {
         .filter { it.length >= 2 }
         .distinct()
         .joinToString(" ") { "$it*" }
+}
+
+private fun AgentActionEntity.toDraft(): AgentActionDraft {
+    val preview = runCatching { JSONObject(previewJson) }.getOrNull()
+    return AgentActionDraft(
+        id = id,
+        title = title,
+        actionType = actionType,
+        state = state,
+        rationale = rationale,
+        sourceCount = preview?.optInt("sourceCount", 0) ?: 0,
+    )
+}
+
+private fun JSONArray?.orEmptyStrings(): List<String> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (index in 0 until length()) {
+            optString(index).takeIf { it.isNotBlank() }?.let(::add)
+        }
+    }
+}
+
+private fun parsedSearchJson(query: String): String {
+    val parsed = parseSearchQuery(query)
+    return JSONObject()
+        .put("phrases", JSONArray(parsed.phrases))
+        .put("freeTerms", JSONArray(parsed.freeTerms))
+        .put("filterTerms", JSONArray(parsed.filterTerms))
+        .toString()
 }
 
 private data class ParsedSearchQuery(

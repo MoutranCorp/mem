@@ -274,6 +274,27 @@ data class SearchQueryEntity(
 )
 
 @Entity(
+    tableName = "agent_actions",
+    indices = [
+        Index(value = ["actionType"]),
+        Index(value = ["state"]),
+        Index(value = ["createdAt"]),
+    ],
+)
+data class AgentActionEntity(
+    @PrimaryKey val id: String,
+    val actionType: String,
+    val state: String,
+    val title: String,
+    val rationale: String,
+    val previewJson: String,
+    val undoPayloadJson: String?,
+    val createdAt: Long,
+    val appliedAt: Long?,
+    val undoneAt: Long?,
+)
+
+@Entity(
     tableName = "tags",
     indices = [Index(value = ["name"], unique = true)],
 )
@@ -592,6 +613,15 @@ interface SearchQueryDao {
 }
 
 @Dao
+interface AgentActionDao {
+    @Query("SELECT * FROM agent_actions WHERE id = :id LIMIT 1")
+    suspend fun findById(id: String): AgentActionEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(action: AgentActionEntity)
+}
+
+@Dao
 interface TagDao {
     @Query("SELECT tags.* FROM tags INNER JOIN source_tags ON tags.id = source_tags.tagId WHERE source_tags.sourceId = :sourceId ORDER BY tags.name")
     suspend fun tagsForSource(sourceId: String): List<TagEntity>
@@ -627,6 +657,9 @@ interface CollectionDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertCollectionSource(collectionSource: CollectionSourceEntity)
+
+    @Query("DELETE FROM collection_sources WHERE collectionId = :collectionId AND sourceId = :sourceId")
+    suspend fun deleteCollectionSource(collectionId: String, sourceId: String)
 }
 
 @Dao
@@ -654,13 +687,14 @@ interface AuthSessionDao {
         ChunkEmbeddingEntity::class,
         VisualObservationEntity::class,
         SearchQueryEntity::class,
+        AgentActionEntity::class,
         TagEntity::class,
         SourceTagEntity::class,
         CollectionEntity::class,
         CollectionSourceEntity::class,
         AuthSessionEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
 )
 abstract class MemDatabase : RoomDatabase() {
@@ -675,6 +709,7 @@ abstract class MemDatabase : RoomDatabase() {
     abstract fun chunkEmbeddingDao(): ChunkEmbeddingDao
     abstract fun visualObservationDao(): VisualObservationDao
     abstract fun searchQueryDao(): SearchQueryDao
+    abstract fun agentActionDao(): AgentActionDao
     abstract fun tagDao(): TagDao
     abstract fun collectionDao(): CollectionDao
     abstract fun authSessionDao(): AuthSessionDao
@@ -733,6 +768,35 @@ abstract class MemDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 createEmbeddingTables(db)
             }
+        }
+
+        private val migration7To8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                createAgentActionTables(db)
+            }
+        }
+
+        private fun createAgentActionTables(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `agent_actions` (
+                    `id` TEXT NOT NULL,
+                    `actionType` TEXT NOT NULL,
+                    `state` TEXT NOT NULL,
+                    `title` TEXT NOT NULL,
+                    `rationale` TEXT NOT NULL,
+                    `previewJson` TEXT NOT NULL,
+                    `undoPayloadJson` TEXT,
+                    `createdAt` INTEGER NOT NULL,
+                    `appliedAt` INTEGER,
+                    `undoneAt` INTEGER,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent(),
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_agent_actions_actionType` ON `agent_actions` (`actionType`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_agent_actions_state` ON `agent_actions` (`state`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_agent_actions_createdAt` ON `agent_actions` (`createdAt`)")
         }
 
         private fun createEmbeddingTables(db: SupportSQLiteDatabase) {
@@ -981,7 +1045,7 @@ abstract class MemDatabase : RoomDatabase() {
                     MemDatabase::class.java,
                     "mem.db",
                 )
-                    .addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6, migration6To7)
+                    .addMigrations(migration1To2, migration2To3, migration3To4, migration4To5, migration5To6, migration6To7, migration7To8)
                     .build()
                     .also { instance = it }
             }
