@@ -230,8 +230,11 @@ and opened in a fullscreen Media3 player. Imports generate local thumbnails,
 feed autoplay is limited to one visible video at a time, inline controls stay
 hidden until tap, and playback seek-back/seek-forward seconds are configurable
 in settings. Saved memories can be deleted from primary library/detail surfaces,
-and playable thumbnails expose fullscreen expand controls. This provides the
-playback test harness before yt-dlp download/save behavior is added.
+and playable thumbnails expose fullscreen expand controls. Source detail now
+has a rights-confirmed `Save authorized copy` flow that runs packaged `yt-dlp`,
+stores downloaded media in app-private storage, and attaches it as a local
+playback asset. This is still a foreground spike; long-running production media
+work should move to user-visible data transfer/foreground service jobs.
 
 Deliverables:
 

@@ -59,6 +59,89 @@ def extract(url, files_dir, ffmpeg_path="", cookie_file_path=""):
     return json.dumps(payload, ensure_ascii=False)
 
 
+def download_authorized(url, files_dir, ffmpeg_path="", cookie_file_path=""):
+    started = time.time()
+    cache_dir = os.path.join(files_dir or "", "yt_dlp_cache")
+    output_dir = os.path.join(files_dir or "", "mem-downloads")
+    os.makedirs(cache_dir, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
+
+    options = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "extract_flat": False,
+        "ignore_no_formats_error": False,
+        "socket_timeout": 30,
+        "cachedir": cache_dir,
+        "paths": {"home": output_dir, "temp": output_dir},
+        "outtmpl": "%(extractor_key)s-%(id)s.%(ext)s",
+        "restrictfilenames": True,
+        "format": "best[ext=mp4]/best",
+    }
+    if ffmpeg_path:
+        options["ffmpeg_location"] = ffmpeg_path
+    if cookie_file_path:
+        options["cookiefile"] = cookie_file_path
+
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info = ydl.extract_info(url, download=True)
+            prepared = ydl.prepare_filename(info)
+        local_path = resolved_download_path(prepared, output_dir, started)
+        if not local_path:
+            raise FileNotFoundError("yt-dlp finished but no downloaded media file was found")
+        payload = {
+            "ok": True,
+            "sourceUrl": url,
+            "ytDlpVersion": yt_dlp.version.__version__,
+            "durationMs": int((time.time() - started) * 1000),
+            "ffmpegDetected": bool(ffmpeg_path),
+            "cookieFileDetected": bool(cookie_file_path),
+            "localPath": local_path,
+            "mimeType": mime_type_for(local_path),
+            "title": text(info.get("title")) if isinstance(info, dict) else None,
+            "durationSeconds": info.get("duration") if isinstance(info, dict) else None,
+            "webpageUrl": info.get("webpage_url") if isinstance(info, dict) else url,
+        }
+    except Exception as exc:
+        payload = error_payload(url, started, exc, is_auth_required(str(exc)))
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def resolved_download_path(prepared, output_dir, started):
+    candidates = []
+    if prepared and os.path.exists(prepared):
+        candidates.append(prepared)
+    try:
+        for name in os.listdir(output_dir):
+            path = os.path.join(output_dir, name)
+            if not os.path.isfile(path):
+                continue
+            if path.endswith((".part", ".ytdl", ".temp")):
+                continue
+            if os.path.getmtime(path) >= started - 2:
+                candidates.append(path)
+    except FileNotFoundError:
+        pass
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: os.path.getmtime(path))
+
+
+def mime_type_for(path):
+    lower = (path or "").lower()
+    if lower.endswith(".mp4") or lower.endswith(".m4v"):
+        return "video/mp4"
+    if lower.endswith(".webm"):
+        return "video/webm"
+    if lower.endswith(".mov"):
+        return "video/quicktime"
+    if lower.endswith(".mkv"):
+        return "video/x-matroska"
+    return "video/*"
+
+
 def error_payload(url, started, exc, auth_required=False):
     message = str(exc)
     payload = {

@@ -75,6 +75,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.Folder
 import androidx.compose.material.icons.rounded.Fullscreen
@@ -345,6 +346,8 @@ private class MemAppState(
         private set
     var playingMemory by mutableStateOf<MemoryUi?>(null)
         private set
+    var authorizedSaveMemory by mutableStateOf<MemoryUi?>(null)
+        private set
     var instagramAuthMemory by mutableStateOf<MemoryUi?>(null)
         private set
     var isExtracting by mutableStateOf(false)
@@ -583,6 +586,56 @@ private class MemAppState(
         }
     }
 
+    fun requestAuthorizedSave(memory: MemoryUi) {
+        if (memory.openUrl.isNullOrBlank()) {
+            logOutput = "No source URL is available for ${memory.title}."
+            return
+        }
+        authorizedSaveMemory = memory
+        selectedMemory = null
+    }
+
+    fun closeAuthorizedSave() {
+        authorizedSaveMemory = null
+    }
+
+    fun confirmAuthorizedSave() {
+        val memory = authorizedSaveMemory ?: return
+        val input = memory.openUrl
+        if (input.isNullOrBlank()) {
+            logOutput = "No source URL is available for ${memory.title}."
+            authorizedSaveMemory = null
+            return
+        }
+        authorizedSaveMemory = null
+        isExtracting = true
+        selectedTab = MainTab.Inbox
+        logOutput = "Saving authorized copy with packaged yt-dlp...\n\n$input"
+        scope.launch {
+            val authSession = repository.authSessionForInput(input)
+            val result = extractor.downloadAuthorized(input, authSession?.cookieFilePath)
+            if (!result.ok || result.localPath.isNullOrBlank()) {
+                isExtracting = false
+                logOutput = result.prettyText
+                return@launch
+            }
+            val metadata = withContext(Dispatchers.IO) { context.videoAssetMetadata(File(result.localPath)) }
+            val attached = repository.attachLocalVideoPlayback(
+                sourceId = memory.id,
+                filePath = result.localPath,
+                thumbnailPath = metadata.thumbnailFile?.absolutePath,
+                mimeType = result.mimeType ?: metadata.mimeType,
+                durationMs = metadata.durationMs ?: result.durationSeconds?.times(1000L),
+            )
+            isExtracting = false
+            logOutput = if (attached) {
+                "Saved authorized copy for ${memory.title}.\n\n${result.localPath}"
+            } else {
+                "Downloaded media but could not attach it to ${memory.title}.\n\n${result.localPath}"
+            }
+        }
+    }
+
     fun openSourceDetail(memory: MemoryUi) {
         selectedMemory = memory
     }
@@ -807,6 +860,35 @@ private class YtDlpExtractor(private val activity: Activity) {
         }
     }
 
+    suspend fun downloadAuthorized(url: String, cookieFilePath: String? = null): DownloadResult = withContext(Dispatchers.IO) {
+        try {
+            if (!Python.isStarted()) {
+                Python.start(AndroidPlatform(activity))
+            }
+            val py = Python.getInstance()
+            val extractor = py.getModule("mem_yt_dlp_extractor")
+            val ffmpegPath = findPackagedExecutable("ffmpeg")
+            val raw: PyObject = extractor.callAttr(
+                "download_authorized",
+                url,
+                activity.filesDir.absolutePath,
+                ffmpegPath,
+                cookieFilePath.orEmpty(),
+            )
+            DownloadResult.fromJson(raw.toString())
+        } catch (t: Throwable) {
+            DownloadResult(
+                ok = false,
+                localPath = null,
+                mimeType = null,
+                title = null,
+                durationSeconds = null,
+                error = "${t::class.java.simpleName}: ${t.message}",
+                prettyText = "Authorized save failed:\n${t::class.java.simpleName}: ${t.message}",
+            )
+        }
+    }
+
     private fun findPackagedExecutable(name: String): String {
         val nativeLibDir = File(activity.applicationInfo.nativeLibraryDir)
         val candidate = File(nativeLibDir, "lib$name.so")
@@ -845,6 +927,32 @@ private class YtDlpExtractor(private val activity: Activity) {
                 error = "${t::class.java.simpleName}: ${t.message}",
                 ragText = null,
                 rawMetadataJson = raw,
+            )
+        }
+    }
+}
+
+private data class DownloadResult(
+    val ok: Boolean,
+    val localPath: String?,
+    val mimeType: String?,
+    val title: String?,
+    val durationSeconds: Long?,
+    val error: String?,
+    val prettyText: String,
+) {
+    companion object {
+        fun fromJson(json: String): DownloadResult {
+            val root = JSONObject(json)
+            val ok = root.optBoolean("ok", false)
+            return DownloadResult(
+                ok = ok,
+                localPath = root.optString("localPath").takeIf { it.isNotBlank() },
+                mimeType = root.optString("mimeType").takeIf { it.isNotBlank() },
+                title = root.optString("title").takeIf { it.isNotBlank() },
+                durationSeconds = root.optLong("durationSeconds").takeIf { root.has("durationSeconds") },
+                error = root.optString("error").takeIf { it.isNotBlank() },
+                prettyText = root.toString(2),
             )
         }
     }
@@ -1021,6 +1129,12 @@ private data class ImportedVideoFile(
     val thumbnailFile: File?,
 )
 
+private data class LocalVideoMetadata(
+    val durationMs: Long?,
+    val thumbnailFile: File?,
+    val mimeType: String?,
+)
+
 private fun Context.readSharedTextFile(uri: Uri): ImportedTextFile? {
     val fileName = uri.displayName(this) ?: "Imported text"
     val mimeType = contentResolver.getType(uri)
@@ -1115,17 +1229,29 @@ private fun Context.copySharedVideoFile(uri: Uri): ImportedVideoFile? {
     } else {
         temp.renameTo(target)
     }
+    val metadata = videoAssetMetadata(target, mimeType, hash)
+    return ImportedVideoFile(
+        fileName = fileName,
+        mimeType = mimeType,
+        file = target,
+        stableInput = stableInput,
+        durationMs = metadata.durationMs,
+        thumbnailFile = metadata.thumbnailFile,
+    )
+}
+
+private fun Context.videoAssetMetadata(file: File, knownMimeType: String? = null, stableName: String = file.nameWithoutExtension): LocalVideoMetadata {
     var thumbnailFile: File? = null
     val durationMs = runCatching {
         val retriever = MediaMetadataRetriever()
         try {
-            retriever.setDataSource(target.absolutePath)
+            retriever.setDataSource(file.absolutePath)
             val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
             val frame = retriever.getFrameAtTime(1_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
                 ?: retriever.getFrameAtTime()
             if (frame != null) {
                 val thumbsDir = File(filesDir, "mem-imports/video-thumbnails").apply { mkdirs() }
-                val thumb = File(thumbsDir, "$hash.jpg")
+                val thumb = File(thumbsDir, "$stableName.jpg")
                 if (!thumb.exists()) {
                     thumb.outputStream().use { output ->
                         frame.compress(Bitmap.CompressFormat.JPEG, 86, output)
@@ -1138,13 +1264,16 @@ private fun Context.copySharedVideoFile(uri: Uri): ImportedVideoFile? {
             retriever.release()
         }
     }.getOrNull()
-    return ImportedVideoFile(
-        fileName = fileName,
-        mimeType = mimeType,
-        file = target,
-        stableInput = stableInput,
+    return LocalVideoMetadata(
         durationMs = durationMs,
         thumbnailFile = thumbnailFile,
+        mimeType = knownMimeType ?: when (file.extension.lowercase()) {
+            "mp4", "m4v" -> "video/mp4"
+            "webm" -> "video/webm"
+            "mov" -> "video/quicktime"
+            "mkv" -> "video/x-matroska"
+            else -> "video/*"
+        },
     )
 }
 
@@ -1780,6 +1909,7 @@ private fun MemScaffold(state: MemAppState) {
                 onAddToPlaylist = state::addToPlaylist,
                 onTagForReview = state::tagForReview,
                 onDeleteMemory = state::deleteMemory,
+                onRequestAuthorizedSave = state::requestAuthorizedSave,
             )
         }
     }
@@ -1797,6 +1927,14 @@ private fun MemScaffold(state: MemAppState) {
             seekBackSeconds = state.appearance.seekBackSeconds,
             seekForwardSeconds = state.appearance.seekForwardSeconds,
             onClose = state::closePlayer,
+        )
+    }
+
+    state.authorizedSaveMemory?.let { memory ->
+        AuthorizedSaveScreen(
+            memory = memory,
+            onCancel = state::closeAuthorizedSave,
+            onConfirm = state::confirmAuthorizedSave,
         )
     }
 }
@@ -2370,6 +2508,7 @@ private fun SourceDetailSheet(
     onAddToPlaylist: (MemoryUi) -> Unit,
     onTagForReview: (MemoryUi) -> Unit,
     onDeleteMemory: (MemoryUi) -> Unit,
+    onRequestAuthorizedSave: (MemoryUi) -> Unit,
 ) {
     Column(
         modifier = Modifier
@@ -2520,6 +2659,17 @@ private fun SourceDetailSheet(
                 Icon(Icons.Rounded.Bookmarks, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
                 Text("Playlist")
+            }
+        }
+        if (memory.localPlaybackPath == null && !memory.openUrl.isNullOrBlank()) {
+            OutlinedButton(
+                onClick = { onRequestAuthorizedSave(memory) },
+                modifier = Modifier.fillMaxWidth(),
+                shape = MemTokens.shapes.pill,
+            ) {
+                Icon(Icons.Rounded.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(MemTokens.spacing.xs))
+                Text("Save authorized copy")
             }
         }
         OutlinedButton(
@@ -2765,6 +2915,54 @@ private fun FullscreenPlayerScreen(
                         .fillMaxWidth()
                         .weight(1f),
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AuthorizedSaveScreen(memory: MemoryUi, onCancel: () -> Unit, onConfirm: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .background(Color.Black.copy(alpha = 0.24f)),
+        color = MemTokens.colors.background,
+        contentColor = MemTokens.colors.textPrimary,
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(MemTokens.spacing.lg),
+            verticalArrangement = Arrangement.Center,
+        ) {
+            SurfaceCard {
+                Column(
+                    modifier = Modifier.padding(MemTokens.spacing.lg),
+                    verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.md),
+                ) {
+                    IconBadge(Icons.Rounded.Download, MemTokens.colors.accentMuted, MemTokens.colors.accent, size = 44.dp)
+                    Text("Save authorized copy", color = MemTokens.colors.textPrimary, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                    Text(memory.title, color = MemTokens.colors.textSecondary, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "Only continue if you own this media or have explicit rights to save a local copy. Mem will use packaged yt-dlp and store the file privately inside the app.",
+                        color = MemTokens.colors.textSecondary,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
+                        OutlinedButton(onClick = onCancel, modifier = Modifier.weight(1f), shape = MemTokens.shapes.pill) {
+                            Text("Cancel")
+                        }
+                        PrimaryButton(
+                            label = "I have rights",
+                            icon = Icons.Rounded.CheckCircle,
+                            onClick = onConfirm,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
             }
         }
     }

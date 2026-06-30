@@ -370,6 +370,61 @@ class MemoryRepository(private val database: MemDatabase) {
         return source.id
     }
 
+    suspend fun attachLocalVideoPlayback(
+        sourceId: String,
+        filePath: String,
+        thumbnailPath: String?,
+        mimeType: String?,
+        durationMs: Long?,
+    ): Boolean {
+        val source = database.sourceDao().findById(sourceId) ?: return false
+        val now = System.currentTimeMillis()
+        database.sourceDao().upsert(
+            source.copy(
+                durationSeconds = durationMs?.let { (it / 1000L).coerceAtLeast(0L) } ?: source.durationSeconds,
+                rightsState = "user_owned",
+                authState = "authorized",
+                processingState = "done",
+                updatedAt = now,
+            ),
+        )
+        database.assetDao().upsert(
+            AssetEntity(
+                id = stableId("asset:${source.id}:playback"),
+                sourceId = source.id,
+                assetType = "video",
+                role = "playback",
+                remoteUrl = null,
+                localPath = filePath,
+                mimeType = mimeType,
+                width = null,
+                height = null,
+                durationMs = durationMs,
+                createdAt = now,
+            ),
+        )
+        thumbnailPath?.takeIf { it.isNotBlank() }?.let { path ->
+            database.assetDao().upsert(
+                AssetEntity(
+                    id = stableId("asset:${source.id}:thumbnail"),
+                    sourceId = source.id,
+                    assetType = "image",
+                    role = "thumbnail",
+                    remoteUrl = null,
+                    localPath = path,
+                    mimeType = "image/jpeg",
+                    width = null,
+                    height = null,
+                    durationMs = null,
+                    createdAt = now,
+                ),
+            )
+        }
+        ensureTags(source.id, listOf("video", "local", "playable", "authorized"))
+        indexSource(source.copy(processingState = "done", authState = "authorized"), source.summary)
+        return true
+    }
+
     private suspend fun indexSource(source: SourceEntity, extractedText: String?) {
         val durableTags = database.tagDao().tagsForSource(source.id).map { it.name }
         val tags = (listOf(source.processingState, source.sourceType, source.authState, source.originDomain) + durableTags)
