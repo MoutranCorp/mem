@@ -133,13 +133,17 @@ Immediate next steps:
    Source detail now loads indexed chunks so transcript/article context is
    inspectable from the memory itself. Timestamped citations now open source
    detail at the cited time and seek local playback when media is playable.
+   Timestamped chunks inside source detail can also jump local playback to
+   their indexed moment.
 4. Add deterministic search filters and match explanations from the command
    field.
    Started with simple `type:`, `site:`, `domain:`, `status:`, and `has:`
    filter tokens routed into FTS tags, quoted phrase handling, and match
    reason cards. Search now applies structured hard filters for type, domain,
-   status, transcript/visual/timestamp capabilities, negative terms, and shows
-   rank signals on cited result cards.
+   status, transcript/visual/timestamp capabilities, negative terms,
+   `duration:` ranges, and `saved:`/`date:` ranges, then shows rank signals on
+   cited result cards. Filter-only queries can seed retrieval without a keyword
+   term.
 5. Add an embedding/index interface so every extracted record can become a RAG
    document with stable IDs, source URL, timestamp, title, tags, and transcript
    segments.

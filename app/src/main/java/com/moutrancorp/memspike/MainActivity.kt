@@ -1761,6 +1761,7 @@ private data class ContentChunkUi(
     val id: String,
     val text: String,
     val chunkType: String,
+    val startTimeMs: Long?,
     val label: String,
     val startTimeLabel: String?,
     val provider: String?,
@@ -1809,6 +1810,7 @@ private fun ContentChunkData.toContentChunkUi(): ContentChunkUi {
         id = id,
         text = text,
         chunkType = chunkType,
+        startTimeMs = startTimeMs,
         label = label,
         startTimeLabel = time,
         provider = provider,
@@ -2985,6 +2987,7 @@ private fun SourceDetailSheet(
     onDeleteMemory: (MemoryUi) -> Unit,
     onRequestAuthorizedSave: (MemoryUi) -> Unit,
 ) {
+    var activeStartMs by remember(memory.id, citationStartMs) { mutableStateOf(citationStartMs) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -3010,7 +3013,7 @@ private fun SourceDetailSheet(
         if (memory.localPlaybackPath != null) {
             LocalVideoPlayer(
                 path = memory.localPlaybackPath,
-                startPositionMs = citationStartMs,
+                startPositionMs = activeStartMs,
                 seekBackSeconds = seekBackSeconds,
                 seekForwardSeconds = seekForwardSeconds,
                 controlsInitiallyVisible = true,
@@ -3031,7 +3034,7 @@ private fun SourceDetailSheet(
             )
         }
 
-        citationStartMs?.let { startMs ->
+        activeStartMs?.let { startMs ->
             SurfaceCard(container = MemTokens.colors.accentMuted, border = null) {
                 Row(
                     modifier = Modifier.padding(MemTokens.spacing.md),
@@ -3086,7 +3089,12 @@ private fun SourceDetailSheet(
             }
         }
 
-        IndexedContextPanel(chunks = chunks)
+        IndexedContextPanel(
+            chunks = chunks,
+            onJumpToChunk = { chunk ->
+                activeStartMs = chunk.startTimeMs
+            },
+        )
 
         SurfaceCard {
             Column(
@@ -3190,7 +3198,10 @@ private fun SourceDetailSheet(
 }
 
 @Composable
-private fun IndexedContextPanel(chunks: List<ContentChunkUi>) {
+private fun IndexedContextPanel(
+    chunks: List<ContentChunkUi>,
+    onJumpToChunk: (ContentChunkUi) -> Unit,
+) {
     SurfaceCard {
         Column(
             modifier = Modifier.padding(MemTokens.spacing.md),
@@ -3211,10 +3222,24 @@ private fun IndexedContextPanel(chunks: List<ContentChunkUi>) {
                 chunks.take(8).forEachIndexed { index, chunk ->
                     if (index > 0) DividerLine()
                     Column(verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
-                            MetadataTiny(chunk.label)
-                            chunk.startTimeLabel?.let { MetadataTiny(it) }
-                            chunk.provider?.let { MetadataTiny(it) }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs),
+                        ) {
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs),
+                            ) {
+                                MetadataTiny(chunk.label)
+                                chunk.startTimeLabel?.let { MetadataTiny(it) }
+                                chunk.provider?.let { MetadataTiny(it) }
+                            }
+                            if (chunk.startTimeMs != null) {
+                                MemIconButton(Icons.Rounded.PlayCircle, "Jump to ${chunk.startTimeLabel}") {
+                                    onJumpToChunk(chunk)
+                                }
+                            }
                         }
                         SelectionContainer {
                             Text(

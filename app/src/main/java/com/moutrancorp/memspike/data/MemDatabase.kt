@@ -404,6 +404,7 @@ data class ChunkSearchResult(
     val sourceType: String,
     val originDomain: String?,
     val author: String?,
+    val durationSeconds: Long?,
     val body: String,
     val chunkType: String,
     val startTimeMs: Long?,
@@ -418,6 +419,7 @@ data class ChunkEmbeddingCandidate(
     val sourceType: String,
     val originDomain: String?,
     val author: String?,
+    val durationSeconds: Long?,
     val body: String,
     val chunkType: String,
     val startTimeMs: Long?,
@@ -527,7 +529,8 @@ interface ChunkSearchDao {
         """
         SELECT sources.id AS sourceId, chunk_search.chunkId AS chunkId, sources.title AS title,
                sources.sourceType AS sourceType, sources.originDomain AS originDomain,
-               sources.author AS author, chunk_search.body AS body,
+               sources.author AS author, sources.durationSeconds AS durationSeconds,
+               chunk_search.body AS body,
                document_chunks.chunkType AS chunkType, document_chunks.startTimeMs AS startTimeMs,
                document_chunks.endTimeMs AS endTimeMs, sources.savedAt AS savedAt
         FROM chunk_search
@@ -544,7 +547,8 @@ interface ChunkSearchDao {
         """
         SELECT sources.id AS sourceId, chunk_search.chunkId AS chunkId, sources.title AS title,
                sources.sourceType AS sourceType, sources.originDomain AS originDomain,
-               sources.author AS author, chunk_search.body AS body,
+               sources.author AS author, sources.durationSeconds AS durationSeconds,
+               chunk_search.body AS body,
                document_chunks.chunkType AS chunkType, document_chunks.startTimeMs AS startTimeMs,
                document_chunks.endTimeMs AS endTimeMs, sources.savedAt AS savedAt
         FROM chunk_search
@@ -591,7 +595,8 @@ interface ChunkEmbeddingDao {
         """
         SELECT sources.id AS sourceId, document_chunks.id AS chunkId, sources.title AS title,
                sources.sourceType AS sourceType, sources.originDomain AS originDomain,
-               sources.author AS author, document_chunks.text AS body,
+               sources.author AS author, sources.durationSeconds AS durationSeconds,
+               document_chunks.text AS body,
                document_chunks.chunkType AS chunkType, document_chunks.startTimeMs AS startTimeMs,
                document_chunks.endTimeMs AS endTimeMs, sources.savedAt AS savedAt,
                chunk_embeddings.dimensions AS dimensions, chunk_embeddings.vector AS vector

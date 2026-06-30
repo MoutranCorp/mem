@@ -13,6 +13,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.net.URI
 import java.security.MessageDigest
+import java.util.Calendar
 import kotlin.math.sqrt
 import java.util.Locale
 import java.util.UUID
@@ -67,7 +68,19 @@ class MemoryRepository(private val database: MemDatabase) {
         val parsed = parseSearchQuery(rawQuery)
         val ftsQuery = toFtsQuery(rawQuery)
         val ftsResults = if (ftsQuery.isBlank()) {
-            emptyList()
+            if (parsed.hasStructuredFilters()) {
+                database.chunkEmbeddingDao()
+                    .candidates("text", 5_000)
+                    .mapIndexed { index, candidate ->
+                        candidate.toSearchResultData(score = 1.0f / (index + 1)).copy(
+                            retrievalMode = "filter",
+                            matchReason = "Structured filter match",
+                            rankSignals = "filter",
+                        )
+                    }
+            } else {
+                emptyList()
+            }
         } else {
             database.chunkSearchDao().searchResults(ftsQuery, 120).mapIndexed { index, result ->
                 result.toSearchResultData(
@@ -873,6 +886,7 @@ data class SearchResultData(
     val sourceType: String,
     val originDomain: String?,
     val author: String?,
+    val durationSeconds: Long?,
     val snippet: String,
     val chunkType: String,
     val matchReason: String,
@@ -964,6 +978,7 @@ private fun ChunkSearchResult.toSearchResultData(retrievalMode: String, rankScor
         sourceType = sourceType,
         originDomain = originDomain,
         author = author,
+        durationSeconds = durationSeconds,
         snippet = body.take(360),
         chunkType = chunkType,
         matchReason = reason,
@@ -991,6 +1006,7 @@ private fun ChunkEmbeddingCandidate.toSearchResultData(score: Float): SearchResu
         sourceType = sourceType,
         originDomain = originDomain,
         author = author,
+        durationSeconds = durationSeconds,
         snippet = body.take(360),
         chunkType = chunkType,
         matchReason = reason,
@@ -1161,6 +1177,9 @@ private data class ParsedSearchQuery(
     val statuses: Set<String>,
     val requiredChunkTypes: Set<String>,
     val requiredCapabilities: Set<String>,
+    val durationRanges: List<LongRange>,
+    val savedRanges: List<LongRange>,
+    val dateRanges: List<LongRange>,
 ) {
     fun matches(result: SearchResultData): Boolean {
         val haystack = result.searchHaystack()
@@ -1173,7 +1192,25 @@ private data class ParsedSearchQuery(
         if (statuses.isNotEmpty() && statuses.none { haystack.contains(it) }) return false
         if (requiredChunkTypes.isNotEmpty() && result.chunkType.lowercase(Locale.US) !in requiredChunkTypes) return false
         if ("timestamp" in requiredCapabilities && result.startTimeMs == null) return false
+        if (durationRanges.isNotEmpty()) {
+            val duration = result.durationSeconds ?: return false
+            if (durationRanges.none { duration in it }) return false
+        }
+        if (savedRanges.isNotEmpty() && savedRanges.none { result.savedAt in it }) return false
+        if (dateRanges.isNotEmpty() && dateRanges.none { result.savedAt in it }) return false
         return true
+    }
+
+    fun hasStructuredFilters(): Boolean {
+        return types.isNotEmpty() ||
+            domains.isNotEmpty() ||
+            statuses.isNotEmpty() ||
+            requiredChunkTypes.isNotEmpty() ||
+            requiredCapabilities.isNotEmpty() ||
+            durationRanges.isNotEmpty() ||
+            savedRanges.isNotEmpty() ||
+            dateRanges.isNotEmpty() ||
+            negativeTerms.isNotEmpty()
     }
 
     fun rankBoost(result: SearchResultData): Float {
@@ -1183,6 +1220,8 @@ private data class ParsedSearchQuery(
         freeTerms.forEach { term -> if (haystack.contains(term.lowercase(Locale.US))) boost += 0.12f }
         if (requiredChunkTypes.contains(result.chunkType.lowercase(Locale.US))) boost += 0.35f
         if (domains.any { result.originDomain?.lowercase(Locale.US)?.contains(it) == true }) boost += 0.25f
+        if (durationRanges.isNotEmpty() && result.durationSeconds != null) boost += 0.18f
+        if (savedRanges.isNotEmpty() || dateRanges.isNotEmpty()) boost += 0.12f
         if (result.startTimeMs != null) boost += 0.08f
         if (result.retrievalMode == "hybrid") boost += 0.25f
         return boost
@@ -1199,6 +1238,9 @@ private data class ParsedSearchQuery(
             .put("statuses", JSONArray(statuses.toList()))
             .put("requiredChunkTypes", JSONArray(requiredChunkTypes.toList()))
             .put("requiredCapabilities", JSONArray(requiredCapabilities.toList()))
+            .put("durationRanges", JSONArray(durationRanges.map { "${it.first}..${it.last}" }))
+            .put("savedRanges", JSONArray(savedRanges.map { "${it.first}..${it.last}" }))
+            .put("dateRanges", JSONArray(dateRanges.map { "${it.first}..${it.last}" }))
             .toString()
     }
 }
@@ -1212,6 +1254,9 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
     val statuses = mutableSetOf<String>()
     val requiredChunkTypes = mutableSetOf<String>()
     val requiredCapabilities = mutableSetOf<String>()
+    val durationRanges = mutableListOf<LongRange>()
+    val savedRanges = mutableListOf<LongRange>()
+    val dateRanges = mutableListOf<LongRange>()
     val phrases = Regex("\"([^\"]+)\"")
         .findAll(query)
         .mapNotNull { it.groupValues.getOrNull(1)?.trim()?.takeIf(String::isNotBlank) }
@@ -1244,7 +1289,9 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
                         else -> softTerms.add(value)
                     }
                     "tag", "collection", "author", "channel", "language", "action" -> softTerms.add(value)
-                    "duration", "saved", "date" -> Unit
+                    "duration" -> parseDurationRange(value)?.let(durationRanges::add)
+                    "saved" -> parseDateRange(value)?.let(savedRanges::add)
+                    "date" -> parseDateRange(value)?.let(dateRanges::add)
                     else -> freeTerms.add(value)
                 }
             } else {
@@ -1261,7 +1308,134 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
         statuses = statuses.filter { it.isNotBlank() }.toSet(),
         requiredChunkTypes = requiredChunkTypes,
         requiredCapabilities = requiredCapabilities,
+        durationRanges = durationRanges,
+        savedRanges = savedRanges,
+        dateRanges = dateRanges,
     )
+}
+
+private fun parseDurationRange(value: String): LongRange? {
+    val normalized = value.trim().lowercase(Locale.US)
+    if (normalized.isBlank()) return null
+    return when {
+        normalized.startsWith("<=") -> 0L..(parseDurationSeconds(normalized.drop(2)) ?: return null)
+        normalized.startsWith("<") -> 0L..((parseDurationSeconds(normalized.drop(1)) ?: return null) - 1L).coerceAtLeast(0L)
+        normalized.startsWith(">=") -> (parseDurationSeconds(normalized.drop(2)) ?: return null)..Long.MAX_VALUE
+        normalized.startsWith(">") -> ((parseDurationSeconds(normalized.drop(1)) ?: return null) + 1L)..Long.MAX_VALUE
+        ".." in normalized -> {
+            val parts = normalized.split("..", limit = 2)
+            val start = parts.getOrNull(0)?.takeIf { it.isNotBlank() }?.let(::parseDurationSeconds) ?: 0L
+            val end = parts.getOrNull(1)?.takeIf { it.isNotBlank() }?.let(::parseDurationSeconds) ?: Long.MAX_VALUE
+            if (start > end) end..start else start..end
+        }
+        else -> {
+            val seconds = parseDurationSeconds(normalized) ?: return null
+            seconds..seconds
+        }
+    }
+}
+
+private fun parseDurationSeconds(value: String): Long? {
+    val match = Regex("""^(\d+)(ms|s|m|h)?$""").matchEntire(value.trim().lowercase(Locale.US)) ?: return null
+    val amount = match.groupValues[1].toLongOrNull() ?: return null
+    return when (match.groupValues[2]) {
+        "ms" -> amount / 1000L
+        "s", "" -> amount
+        "m" -> amount * 60L
+        "h" -> amount * 3600L
+        else -> null
+    }
+}
+
+private fun parseDateRange(value: String): LongRange? {
+    val normalized = value.trim().lowercase(Locale.US)
+    if (normalized.isBlank()) return null
+    val now = System.currentTimeMillis()
+    return when {
+        normalized == "today" -> calendarRange(now, Calendar.DAY_OF_MONTH)
+        normalized == "yesterday" -> {
+            val calendar = Calendar.getInstance().apply {
+                timeInMillis = now
+                add(Calendar.DAY_OF_YEAR, -1)
+            }
+            dayRange(calendar)
+        }
+        normalized.startsWith("last") && normalized.endsWith("d") -> {
+            val days = normalized.removePrefix("last").removeSuffix("d").toIntOrNull() ?: return null
+            (now - days.coerceAtLeast(0) * 24L * 60L * 60L * 1000L)..now
+        }
+        ".." in normalized -> {
+            val parts = normalized.split("..", limit = 2)
+            val start = parts.getOrNull(0)?.takeIf { it.isNotBlank() }?.let(::parseDateBoundaryStart) ?: 0L
+            val end = parts.getOrNull(1)?.takeIf { it.isNotBlank() }?.let(::parseDateBoundaryEnd) ?: Long.MAX_VALUE
+            if (start > end) end..start else start..end
+        }
+        else -> {
+            val start = parseDateBoundaryStart(normalized) ?: return null
+            val end = parseDateBoundaryEnd(normalized) ?: return null
+            start..end
+        }
+    }
+}
+
+private fun parseDateBoundaryStart(value: String): Long? {
+    val parts = value.split("-")
+    val year = parts.getOrNull(0)?.toIntOrNull() ?: return null
+    val month = parts.getOrNull(1)?.toIntOrNull()
+    val day = parts.getOrNull(2)?.toIntOrNull()
+    return Calendar.getInstance().apply {
+        clear()
+        set(Calendar.YEAR, year)
+        set(Calendar.MONTH, (month ?: 1) - 1)
+        set(Calendar.DAY_OF_MONTH, day ?: 1)
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }.timeInMillis
+}
+
+private fun parseDateBoundaryEnd(value: String): Long? {
+    val parts = value.split("-")
+    val year = parts.getOrNull(0)?.toIntOrNull() ?: return null
+    val month = parts.getOrNull(1)?.toIntOrNull()
+    val day = parts.getOrNull(2)?.toIntOrNull()
+    val calendar = Calendar.getInstance().apply {
+        clear()
+        set(Calendar.YEAR, year)
+        set(Calendar.MONTH, (month ?: 12) - 1)
+        set(Calendar.DAY_OF_MONTH, day ?: getActualMaximum(Calendar.DAY_OF_MONTH))
+        set(Calendar.HOUR_OF_DAY, 23)
+        set(Calendar.MINUTE, 59)
+        set(Calendar.SECOND, 59)
+        set(Calendar.MILLISECOND, 999)
+    }
+    if (month != null && day == null) {
+        calendar.set(Calendar.DAY_OF_MONTH, calendar.getActualMaximum(Calendar.DAY_OF_MONTH))
+    }
+    return calendar.timeInMillis
+}
+
+private fun calendarRange(timeMs: Long, field: Int): LongRange {
+    val calendar = Calendar.getInstance().apply { timeInMillis = timeMs }
+    return when (field) {
+        Calendar.DAY_OF_MONTH -> dayRange(calendar)
+        else -> dayRange(calendar)
+    }
+}
+
+private fun dayRange(calendar: Calendar): LongRange {
+    val start = calendar.clone() as Calendar
+    start.set(Calendar.HOUR_OF_DAY, 0)
+    start.set(Calendar.MINUTE, 0)
+    start.set(Calendar.SECOND, 0)
+    start.set(Calendar.MILLISECOND, 0)
+    val end = start.clone() as Calendar
+    end.set(Calendar.HOUR_OF_DAY, 23)
+    end.set(Calendar.MINUTE, 59)
+    end.set(Calendar.SECOND, 59)
+    end.set(Calendar.MILLISECOND, 999)
+    return start.timeInMillis..end.timeInMillis
 }
 
 private fun normalizeTypeFilter(value: String): String {

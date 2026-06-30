@@ -57,6 +57,8 @@ Queries:
 - `site:youtube.com has:transcript japan`
 - `type:pdf ai agents`
 - `status:needs_auth site:instagram.com`
+- `type:video duration:<5m saved:last30d`
+- `date:2026-06 has:timestamp`
 - `"exact phrase" -ignored`
 
 Expected:

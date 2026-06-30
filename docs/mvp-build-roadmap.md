@@ -293,7 +293,9 @@ Exit criteria:
    summaries and a collection-draft action. Timestamped citations now open
    source detail at the cited time and seek playable local media. Structured
    filters now apply to fused keyword/semantic results, and cited cards show
-   rank signals.
+   rank signals. Duration filters plus saved/date ranges are now enforced
+   against fused results, and timestamped source-detail chunks can jump local
+   playback to their indexed moment.
 3. Add richer source-detail transcript/article layouts with jump targets.
 4. Add benchmark fixtures for saved videos, articles, notes, PDFs, and image
    memories.
