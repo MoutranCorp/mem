@@ -409,6 +409,27 @@ private class MemAppState(
         showCapture = true
         logOutput = "Importing file...\n\n$uri"
         scope.launch {
+            if (context.isImageUri(uri)) {
+                val importedImage = withContext(Dispatchers.IO) { context.copySharedImageFile(uri) }
+                if (importedImage == null) {
+                    isExtracting = false
+                    logOutput = "Could not read this image."
+                    return@launch
+                }
+                captureText = importedImage.fileName
+                val queued = repository.createQueuedSource(importedImage.stableInput)
+                repository.markExtracting(queued.sourceId, queued.jobId)
+                val result = importedImage.toImageData()
+                repository.completeExtraction(
+                    sourceId = queued.sourceId,
+                    jobId = queued.jobId,
+                    result = result,
+                )
+                isExtracting = false
+                logOutput = result.rawMetadataJson
+                return@launch
+            }
+
             if (context.isPdfUri(uri)) {
                 val importedPdf = withContext(Dispatchers.IO) { context.copySharedPdfFile(uri) }
                 if (importedPdf == null) {
@@ -781,6 +802,13 @@ private data class ImportedPdfFile(
     val stableInput: String,
 )
 
+private data class ImportedImageFile(
+    val fileName: String,
+    val mimeType: String?,
+    val file: File,
+    val stableInput: String,
+)
+
 private fun Context.readSharedTextFile(uri: Uri): ImportedTextFile? {
     val fileName = uri.displayName(this) ?: "Imported text"
     val mimeType = contentResolver.getType(uri)
@@ -814,6 +842,62 @@ private fun Context.isPdfUri(uri: Uri): Boolean {
     val fileName = uri.displayName(this).orEmpty()
     val mimeType = contentResolver.getType(uri).orEmpty()
     return mimeType.equals("application/pdf", ignoreCase = true) || fileName.endsWith(".pdf", ignoreCase = true)
+}
+
+private fun Context.isImageUri(uri: Uri): Boolean {
+    val fileName = uri.displayName(this).orEmpty()
+    val mimeType = contentResolver.getType(uri).orEmpty()
+    return mimeType.startsWith("image/", ignoreCase = true) ||
+        fileName.endsWith(".jpg", ignoreCase = true) ||
+        fileName.endsWith(".jpeg", ignoreCase = true) ||
+        fileName.endsWith(".png", ignoreCase = true) ||
+        fileName.endsWith(".webp", ignoreCase = true) ||
+        fileName.endsWith(".gif", ignoreCase = true)
+}
+
+private fun Context.copySharedImageFile(uri: Uri): ImportedImageFile? {
+    val fileName = uri.displayName(this) ?: "Imported image"
+    val mimeType = contentResolver.getType(uri)
+    val importsDir = File(filesDir, "mem-imports/images").apply { mkdirs() }
+    val extension = fileName.substringAfterLast('.', missingDelimiterValue = "")
+        .takeIf { it.length in 2..5 }
+        ?: mimeType?.substringAfter('/', missingDelimiterValue = "")?.takeIf { it.isNotBlank() }
+        ?: "img"
+    val temp = File(importsDir, "${UUID.randomUUID()}.$extension")
+    val digest = MessageDigest.getInstance("SHA-256")
+    val total = contentResolver.openInputStream(uri)?.use { input ->
+        temp.outputStream().use { output ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var totalBytes = 0
+            while (true) {
+                val read = input.read(buffer)
+                if (read <= 0) break
+                totalBytes += read
+                if (totalBytes > MAX_IMAGE_FILE_BYTES) {
+                    temp.delete()
+                    return null
+                }
+                digest.update(buffer, 0, read)
+                output.write(buffer, 0, read)
+            }
+            totalBytes
+        }
+    } ?: return null
+    if (total <= 0) return null
+    val hash = digest.digest().joinToString("") { "%02x".format(it) }
+    val stableInput = "mem-file://${Uri.encode(fileName)}/$hash"
+    val target = File(importsDir, "$hash.$extension")
+    if (target.exists()) {
+        temp.delete()
+    } else {
+        temp.renameTo(target)
+    }
+    return ImportedImageFile(
+        fileName = fileName,
+        mimeType = mimeType,
+        file = target,
+        stableInput = stableInput,
+    )
 }
 
 private fun Context.copySharedPdfFile(uri: Uri): ImportedPdfFile? {
@@ -895,8 +979,39 @@ private fun ImportedTextFile.toTextFileData(): ExtractedSourceData {
     )
 }
 
+private fun ImportedImageFile.toImageData(): ExtractedSourceData {
+    val title = fileName.takeIf { it.isNotBlank() } ?: "Imported image"
+    val raw = JSONObject()
+        .put("ok", true)
+        .put("sourceType", "image")
+        .put("extractor", "image_import")
+        .put("title", title)
+        .put("mimeType", mimeType)
+        .put("localPath", file.absolutePath)
+        .toString(2)
+    return ExtractedSourceData(
+        ok = true,
+        canonicalUrl = stableInput,
+        originalUrl = stableInput,
+        sourceType = "image",
+        originDomain = null,
+        title = title,
+        author = "Imported image",
+        summary = "Image imported into Mem.",
+        thumbnailUrl = file.absolutePath,
+        durationSeconds = null,
+        authRequired = false,
+        error = null,
+        ragText = listOf(title, mimeType, "Image imported into Mem. OCR has not run yet.")
+            .filterNotNull()
+            .joinToString("\n\n"),
+        rawMetadataJson = raw,
+    )
+}
+
 private const val MAX_TEXT_FILE_BYTES = 1_000_000
 private const val MAX_PDF_FILE_BYTES = 20_000_000
+private const val MAX_IMAGE_FILE_BYTES = 20_000_000
 
 private data class IngestionJobUi(
     val id: String,
@@ -1739,6 +1854,7 @@ private fun CaptureSheet(state: MemAppState) {
                         arrayOf(
                             "text/*",
                             "application/pdf",
+                            "image/*",
                             "application/json",
                             "application/xml",
                             "application/x-yaml",
@@ -1903,7 +2019,13 @@ private fun SourceDetailSheet(
                 )
                 DetailRow(
                     "Thumbnail",
-                    if (memory.thumbnailUrl.isNullOrBlank()) "Not saved" else "Saved remote asset",
+                    if (memory.thumbnailUrl.isNullOrBlank()) {
+                        "Not saved"
+                    } else if (memory.thumbnailUrl.startsWith("/") || memory.thumbnailUrl.startsWith("file:")) {
+                        "Saved local asset"
+                    } else {
+                        "Saved remote asset"
+                    },
                 )
             }
         }
@@ -2338,7 +2460,7 @@ private fun SourceVisual(
     } else {
         AsyncImage(
             model = ImageRequest.Builder(LocalContext.current)
-                .data(thumbnail)
+                .data(if (thumbnail.startsWith("/") || thumbnail.startsWith("file:")) File(thumbnail.removePrefix("file://")) else thumbnail)
                 .crossfade(true)
                 .build(),
             contentDescription = null,

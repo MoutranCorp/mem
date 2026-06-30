@@ -113,6 +113,8 @@ sheet, storing imported files as durable `document` sources with `rag_text`
 chunks.
 PDF import now uses packaged `pypdf` to extract embedded text from imported or
 shared PDFs, storing successful extraction output as durable `rag_text`.
+Image import now works from the Capture file picker and Android share sheet,
+copying images into app-private storage and rendering them locally in Library.
 
 Deliverables:
 
@@ -122,7 +124,7 @@ Deliverables:
 - Manual note adapter. Started with direct text capture into durable notes.
 - PDF/text import adapter. Started with text-like document import and embedded
   PDF text extraction.
-- Image import plus OCR spike.
+- Image import plus OCR spike. Started with local image import; OCR remains.
 - Voice note plus transcription spike.
 - Auth-gated source result type.
 
