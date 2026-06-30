@@ -321,8 +321,10 @@ Exit criteria:
    diagnostics in rank signals and health warnings when the library outgrows
    that fallback. Semantic search and chunk indexing now route through
    `EmbeddingProvider` and `VectorIndex` implementations instead of direct
-   repository calls. A production local/cloud embedding provider and approximate
-   vector index remain.
+   repository calls. Source snapshots and cited results now expose derived
+   `contentDepth`/content-profile signals so tools can avoid overstating
+   metadata-only or unindexed memories. A production local/cloud embedding
+   provider and approximate vector index remain.
 6. Implement the first agent tool set: search memory, get source/chunks, and
    draft collection/playlist actions with preview/undo. Started with
    search-generated collection drafts backed by `agent_actions`, preview,

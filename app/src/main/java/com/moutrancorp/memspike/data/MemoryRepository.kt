@@ -78,6 +78,10 @@ class MemoryRepository(private val database: MemDatabase) {
         return RagIndexHealth(
             sourceCount = sourceCount,
             needsAuthSourceCount = database.sourceDao().countNeedsAuth(),
+            metadataOnlySourceCount = database.documentChunkDao().countMetadataOnlySources(),
+            transcriptReadySourceCount = database.documentChunkDao()
+                .countSourcesWithAnyType(listOf("transcript", "transcript_segment")),
+            visuallyIndexedSourceCount = database.documentChunkDao().countSourcesWithAnyType(listOf("visual")),
             indexedChunkCount = chunkCount,
             chunkSearchRowCount = database.chunkSearchDao().countAll(),
             transcriptChunkCount = database.documentChunkDao().countByType("transcript"),
@@ -284,7 +288,41 @@ class MemoryRepository(private val database: MemDatabase) {
 
     suspend fun sourceSnapshot(sourceId: String): SourceSnapshot? {
         val source = database.sourceDao().findById(sourceId) ?: return null
-        return SourceSnapshot(source = source, assets = database.assetDao().findBySource(sourceId))
+        val assets = database.assetDao().findBySource(sourceId)
+        return SourceSnapshot(
+            source = source,
+            assets = assets,
+            contentProfile = contentProfileForSource(source, assets),
+        )
+    }
+
+    private suspend fun contentProfileForSource(source: SourceEntity, assets: List<AssetEntity>): SourceContentProfile {
+        val chunkDao = database.documentChunkDao()
+        val chunkCount = chunkDao.countBySource(source.id)
+        val transcriptChunks = chunkDao.countBySourceAndTypes(source.id, listOf("transcript", "transcript_segment"))
+        val articleChunks = chunkDao.countBySourceAndTypes(source.id, listOf("article"))
+        val documentChunks = chunkDao.countBySourceAndTypes(source.id, listOf("document", "rag_text"))
+        val noteChunks = chunkDao.countBySourceAndTypes(source.id, listOf("note"))
+        val metadataChunks = chunkDao.countBySourceAndTypes(source.id, listOf("metadata"))
+        val visualChunks = chunkDao.countBySourceAndTypes(source.id, listOf("visual"))
+        val timestampedChunks = chunkDao.countTimestampedBySource(source.id)
+        val captionTracks = database.captionTrackDao().countBySource(source.id)
+        val visualObservations = database.visualObservationDao().countBySource(source.id)
+        return SourceContentProfile(
+            chunkCount = chunkCount,
+            transcriptChunkCount = transcriptChunks,
+            articleChunkCount = articleChunks,
+            documentChunkCount = documentChunks,
+            noteChunkCount = noteChunks,
+            metadataChunkCount = metadataChunks,
+            visualChunkCount = visualChunks,
+            timestampedChunkCount = timestampedChunks,
+            captionTrackCount = captionTracks,
+            visualObservationCount = visualObservations,
+            assetRoles = assets.map { it.role }.distinct(),
+            processingState = source.processingState,
+            authState = source.authState,
+        )
     }
 
     suspend fun createQueuedSource(input: String): QueuedSource {
@@ -1214,6 +1252,9 @@ data class MemoryState(
 data class RagIndexHealth(
     val sourceCount: Int,
     val needsAuthSourceCount: Int,
+    val metadataOnlySourceCount: Int,
+    val transcriptReadySourceCount: Int,
+    val visuallyIndexedSourceCount: Int,
     val indexedChunkCount: Int,
     val chunkSearchRowCount: Int,
     val transcriptChunkCount: Int,
@@ -1237,6 +1278,7 @@ data class RagIndexHealth(
     val warnings: List<String>
         get() = buildList {
             if (sourceCount > 0 && indexedChunkCount == 0) add("No indexed chunks yet")
+            if (metadataOnlySourceCount > 0) add("$metadataOnlySourceCount metadata-only source${if (metadataOnlySourceCount == 1) "" else "s"}")
             if (indexedChunkCount > 0 && embeddingCoverage < 0.95f) add("Embedding coverage below 95%")
             if (embeddedChunkCount > semanticCandidateWindow) add("Semantic fallback scans newest $semanticCandidateWindow embeddings")
             if (playbackAssetCount > 0 && visualObservationCount == 0) add("Playable videos have no visual observations")
@@ -1297,6 +1339,9 @@ data class SearchResultData(
     val originDomain: String?,
     val author: String?,
     val durationSeconds: Long?,
+    val processingState: String,
+    val authState: String,
+    val contentDepth: String,
     val snippet: String,
     val chunkType: String,
     val language: String?,
@@ -1334,7 +1379,67 @@ data class AgentActionDraft(
 data class SourceSnapshot(
     val source: SourceEntity,
     val assets: List<AssetEntity>,
+    val contentProfile: SourceContentProfile,
 )
+
+data class SourceContentProfile(
+    val chunkCount: Int,
+    val transcriptChunkCount: Int,
+    val articleChunkCount: Int,
+    val documentChunkCount: Int,
+    val noteChunkCount: Int,
+    val metadataChunkCount: Int,
+    val visualChunkCount: Int,
+    val timestampedChunkCount: Int,
+    val captionTrackCount: Int,
+    val visualObservationCount: Int,
+    val assetRoles: List<String>,
+    val processingState: String,
+    val authState: String,
+) {
+    val contentDepth: String
+        get() = when {
+            authState == "needs_auth" || processingState == "needs_auth" -> "auth_required"
+            transcriptChunkCount > 0 && visualChunkCount > 0 -> "transcript_visual"
+            transcriptChunkCount > 0 -> "transcript"
+            visualChunkCount > 0 -> "visual"
+            articleChunkCount > 0 -> "article"
+            documentChunkCount > 0 -> "document"
+            noteChunkCount > 0 -> "note"
+            chunkCount > 0 && metadataChunkCount == chunkCount -> "metadata_only"
+            chunkCount > 0 -> "indexed"
+            else -> "unindexed"
+        }
+
+    val score: Int
+        get() = buildList {
+            if (chunkCount > 0) add(1)
+            if (metadataChunkCount < chunkCount) add(1)
+            if (transcriptChunkCount > 0 || articleChunkCount > 0 || documentChunkCount > 0 || noteChunkCount > 0) add(1)
+            if (timestampedChunkCount > 0) add(1)
+            if (captionTrackCount > 0) add(1)
+            if (visualChunkCount > 0 || visualObservationCount > 0) add(1)
+            if ("playback" in assetRoles) add(1)
+        }.sum().coerceIn(0, 7)
+
+    val notes: List<String>
+        get() = buildList {
+            when (contentDepth) {
+                "auth_required" -> add("Auth is required before full extraction can run.")
+                "metadata_only" -> add("Only metadata chunks are indexed; answers should say transcript/body content is unavailable.")
+                "unindexed" -> add("No indexed chunks are available yet.")
+                "transcript" -> add("Transcript text is indexed and can support cited answers.")
+                "transcript_visual" -> add("Transcript and visual context are both indexed.")
+                "visual" -> add("Visual context is indexed; transcript/body text may still be missing.")
+            }
+            if (captionTrackCount == 0 && transcriptChunkCount == 0 && processingState == "done") {
+                add("No caption track is stored for this source.")
+            }
+            if ("playback" in assetRoles && visualObservationCount == 0) {
+                add("Playable media exists but visual observations are not model-analyzed yet.")
+            }
+        }
+}
 
 fun canonicalize(input: String): String {
     val trimmed = input.trim()
@@ -1390,6 +1495,9 @@ private fun ChunkSearchResult.toSearchResultData(retrievalMode: String, rankScor
         originDomain = originDomain,
         author = author,
         durationSeconds = durationSeconds,
+        processingState = processingState,
+        authState = authState,
+        contentDepth = contentDepthForChunk(processingState, authState, chunkType),
         snippet = body.take(360),
         chunkType = chunkType,
         language = language,
@@ -1419,6 +1527,9 @@ private fun ChunkEmbeddingCandidate.toSearchResultData(score: Float): SearchResu
         originDomain = originDomain,
         author = author,
         durationSeconds = durationSeconds,
+        processingState = processingState,
+        authState = authState,
+        contentDepth = contentDepthForChunk(processingState, authState, chunkType),
         snippet = body.take(360),
         chunkType = chunkType,
         language = language,
@@ -1440,6 +1551,9 @@ private fun SearchResultData.toToolCitationJson(): JSONObject {
         .put("sourceType", sourceType)
         .put("originDomain", originDomain)
         .put("author", author)
+        .put("processingState", processingState)
+        .put("authState", authState)
+        .put("contentDepth", contentDepth)
         .put("snippet", snippet)
         .put("chunkType", chunkType)
         .put("language", language)
@@ -1464,6 +1578,25 @@ private fun SourceSnapshot.toToolSourceJson(): JSONObject {
         .put("authState", source.authState)
         .put("savedAt", source.savedAt)
         .put("assetRoles", JSONArray(assets.map { it.role }))
+        .put("contentProfile", contentProfile.toToolJson())
+}
+
+private fun SourceContentProfile.toToolJson(): JSONObject {
+    return JSONObject()
+        .put("contentDepth", contentDepth)
+        .put("score", score)
+        .put("chunkCount", chunkCount)
+        .put("transcriptChunkCount", transcriptChunkCount)
+        .put("articleChunkCount", articleChunkCount)
+        .put("documentChunkCount", documentChunkCount)
+        .put("noteChunkCount", noteChunkCount)
+        .put("metadataChunkCount", metadataChunkCount)
+        .put("visualChunkCount", visualChunkCount)
+        .put("timestampedChunkCount", timestampedChunkCount)
+        .put("captionTrackCount", captionTrackCount)
+        .put("visualObservationCount", visualObservationCount)
+        .put("assetRoles", JSONArray(assetRoles))
+        .put("notes", JSONArray(notes))
 }
 
 private fun ContentChunkData.toToolChunkJson(textLimit: Int = 900): JSONObject {
@@ -2073,9 +2206,25 @@ private fun SearchResultData.searchHaystack(): String {
         sourceType,
         originDomain,
         author,
+        processingState,
+        authState,
+        contentDepth,
         snippet,
         chunkType,
         matchReason,
         retrievalMode,
     ).joinToString(" ").lowercase(Locale.US)
+}
+
+private fun contentDepthForChunk(processingState: String, authState: String, chunkType: String): String {
+    return when {
+        authState == "needs_auth" || processingState == "needs_auth" -> "auth_required"
+        chunkType == "metadata" -> "metadata_only"
+        chunkType == "transcript" || chunkType == "transcript_segment" -> "transcript"
+        chunkType == "visual" -> "visual"
+        chunkType == "article" -> "article"
+        chunkType == "document" || chunkType == "rag_text" -> "document"
+        chunkType == "note" -> "note"
+        else -> "indexed"
+    }
 }

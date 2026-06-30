@@ -405,6 +405,8 @@ data class ChunkSearchResult(
     val originDomain: String?,
     val author: String?,
     val durationSeconds: Long?,
+    val processingState: String,
+    val authState: String,
     val body: String,
     val chunkType: String,
     val language: String?,
@@ -421,6 +423,8 @@ data class ChunkEmbeddingCandidate(
     val originDomain: String?,
     val author: String?,
     val durationSeconds: Long?,
+    val processingState: String,
+    val authState: String,
     val body: String,
     val chunkType: String,
     val language: String?,
@@ -511,6 +515,34 @@ interface DocumentChunkDao {
 
     @Query("SELECT COUNT(*) FROM document_chunks WHERE startTimeMs IS NOT NULL")
     suspend fun countTimestamped(): Int
+
+    @Query("SELECT COUNT(DISTINCT sourceId) FROM document_chunks WHERE chunkType IN (:chunkTypes)")
+    suspend fun countSourcesWithAnyType(chunkTypes: List<String>): Int
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM sources
+        WHERE EXISTS (
+            SELECT 1 FROM document_chunks
+            WHERE document_chunks.sourceId = sources.id
+        )
+        AND NOT EXISTS (
+            SELECT 1 FROM document_chunks
+            WHERE document_chunks.sourceId = sources.id
+              AND document_chunks.chunkType != 'metadata'
+        )
+        """,
+    )
+    suspend fun countMetadataOnlySources(): Int
+
+    @Query("SELECT COUNT(*) FROM document_chunks WHERE sourceId = :sourceId")
+    suspend fun countBySource(sourceId: String): Int
+
+    @Query("SELECT COUNT(*) FROM document_chunks WHERE sourceId = :sourceId AND chunkType IN (:chunkTypes)")
+    suspend fun countBySourceAndTypes(sourceId: String, chunkTypes: List<String>): Int
+
+    @Query("SELECT COUNT(*) FROM document_chunks WHERE sourceId = :sourceId AND startTimeMs IS NOT NULL")
+    suspend fun countTimestampedBySource(sourceId: String): Int
 }
 
 @Dao
@@ -569,6 +601,7 @@ interface ChunkSearchDao {
         SELECT sources.id AS sourceId, chunk_search.chunkId AS chunkId, sources.title AS title,
                sources.sourceType AS sourceType, sources.originDomain AS originDomain,
                sources.author AS author, sources.durationSeconds AS durationSeconds,
+               sources.processingState AS processingState, sources.authState AS authState,
                chunk_search.body AS body,
                document_chunks.chunkType AS chunkType, document_chunks.language AS language,
                document_chunks.startTimeMs AS startTimeMs,
@@ -588,6 +621,7 @@ interface ChunkSearchDao {
         SELECT sources.id AS sourceId, chunk_search.chunkId AS chunkId, sources.title AS title,
                sources.sourceType AS sourceType, sources.originDomain AS originDomain,
                sources.author AS author, sources.durationSeconds AS durationSeconds,
+               sources.processingState AS processingState, sources.authState AS authState,
                chunk_search.body AS body,
                document_chunks.chunkType AS chunkType, document_chunks.language AS language,
                document_chunks.startTimeMs AS startTimeMs,
@@ -613,6 +647,9 @@ interface CaptionTrackDao {
 
     @Query("SELECT COUNT(*) FROM caption_tracks")
     suspend fun countAll(): Int
+
+    @Query("SELECT COUNT(*) FROM caption_tracks WHERE sourceId = :sourceId")
+    suspend fun countBySource(sourceId: String): Int
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(track: CaptionTrackEntity)
@@ -643,6 +680,7 @@ interface ChunkEmbeddingDao {
         SELECT sources.id AS sourceId, document_chunks.id AS chunkId, sources.title AS title,
                sources.sourceType AS sourceType, sources.originDomain AS originDomain,
                sources.author AS author, sources.durationSeconds AS durationSeconds,
+               sources.processingState AS processingState, sources.authState AS authState,
                document_chunks.text AS body,
                document_chunks.chunkType AS chunkType, document_chunks.language AS language,
                document_chunks.startTimeMs AS startTimeMs,
@@ -663,6 +701,7 @@ interface ChunkEmbeddingDao {
         SELECT sources.id AS sourceId, document_chunks.id AS chunkId, sources.title AS title,
                sources.sourceType AS sourceType, sources.originDomain AS originDomain,
                sources.author AS author, sources.durationSeconds AS durationSeconds,
+               sources.processingState AS processingState, sources.authState AS authState,
                document_chunks.text AS body,
                document_chunks.chunkType AS chunkType, document_chunks.language AS language,
                document_chunks.startTimeMs AS startTimeMs,
@@ -690,6 +729,9 @@ interface VisualObservationDao {
 
     @Query("SELECT COUNT(*) FROM visual_observations")
     suspend fun countAll(): Int
+
+    @Query("SELECT COUNT(*) FROM visual_observations WHERE sourceId = :sourceId")
+    suspend fun countBySource(sourceId: String): Int
 }
 
 @Dao

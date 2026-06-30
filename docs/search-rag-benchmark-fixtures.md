@@ -160,6 +160,9 @@ Expected:
 - `explain_result` reruns retrieval for a query/source pair and returns the
   citation, match reason, retrieval mode, and rank signals an agent can cite or
   use for debugging.
+- Tool payloads and citations include content-depth signals so model prompts can
+  distinguish transcript-ready, visual, metadata-only, auth-required, and
+  unindexed memories.
 
 ## Manual Smoke Test
 

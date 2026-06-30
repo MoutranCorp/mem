@@ -641,6 +641,7 @@ def tool_get_transcript(
     return {
         "tool": "get_transcript",
         "sourceId": source_id,
+        "contentProfile": source_content_profile(source_id, chunks, auxiliary),
         "hasTranscript": bool(segments),
         "captionTracks": tracks,
         "segments": [
@@ -671,6 +672,7 @@ def tool_get_visual_observations(
     return {
         "tool": "get_visual_observations",
         "sourceId": source_id,
+        "contentProfile": source_content_profile(source_id, chunks, auxiliary),
         "hasVisualObservations": bool(visual_chunks or observations),
         "observations": observations,
         "chunks": [
@@ -698,6 +700,7 @@ def tool_explain_result(query: str, source_id: str, chunks: list[Chunk]) -> dict
             "sourceId": result.chunk.source_id,
             "chunkId": result.chunk.id,
             "chunkType": result.chunk.chunk_type,
+            "contentDepth": content_depth_for_chunk(result.chunk),
             "retrievalMode": result.retrieval_mode,
             "rankSignals": result.rank_signals,
         },
@@ -706,6 +709,85 @@ def tool_explain_result(query: str, source_id: str, chunks: list[Chunk]) -> dict
             f"{result.retrieval_mode} retrieval. Rank signals: {result.rank_signals}."
         ),
     }
+
+
+def source_content_profile(
+    source_id: str,
+    chunks: list[Chunk],
+    auxiliary: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    source_chunks = [chunk for chunk in chunks if chunk.source_id == source_id]
+    transcript_count = sum(1 for chunk in source_chunks if chunk.chunk_type in {"transcript", "transcript_segment"})
+    article_count = sum(1 for chunk in source_chunks if chunk.chunk_type == "article")
+    document_count = sum(1 for chunk in source_chunks if chunk.chunk_type in {"document", "rag_text"})
+    note_count = sum(1 for chunk in source_chunks if chunk.chunk_type == "note")
+    metadata_count = sum(1 for chunk in source_chunks if chunk.chunk_type == "metadata")
+    visual_count = sum(1 for chunk in source_chunks if chunk.chunk_type == "visual")
+    timestamped_count = sum(1 for chunk in source_chunks if chunk.start_time_ms is not None)
+    caption_count = sum(1 for track in auxiliary["captionTracks"] if track["sourceId"] == source_id)
+    visual_observation_count = sum(1 for item in auxiliary["visualObservations"] if item["sourceId"] == source_id)
+    depth = content_depth_from_counts(
+        chunk_count=len(source_chunks),
+        transcript_count=transcript_count,
+        article_count=article_count,
+        document_count=document_count,
+        note_count=note_count,
+        metadata_count=metadata_count,
+        visual_count=visual_count,
+    )
+    return {
+        "contentDepth": depth,
+        "chunkCount": len(source_chunks),
+        "transcriptChunkCount": transcript_count,
+        "articleChunkCount": article_count,
+        "documentChunkCount": document_count,
+        "noteChunkCount": note_count,
+        "metadataChunkCount": metadata_count,
+        "visualChunkCount": visual_count,
+        "timestampedChunkCount": timestamped_count,
+        "captionTrackCount": caption_count,
+        "visualObservationCount": visual_observation_count,
+    }
+
+
+def content_depth_from_counts(
+    chunk_count: int,
+    transcript_count: int,
+    article_count: int,
+    document_count: int,
+    note_count: int,
+    metadata_count: int,
+    visual_count: int,
+) -> str:
+    if transcript_count and visual_count:
+        return "transcript_visual"
+    if transcript_count:
+        return "transcript"
+    if visual_count:
+        return "visual"
+    if article_count:
+        return "article"
+    if document_count:
+        return "document"
+    if note_count:
+        return "note"
+    if chunk_count and metadata_count == chunk_count:
+        return "metadata_only"
+    if chunk_count:
+        return "indexed"
+    return "unindexed"
+
+
+def content_depth_for_chunk(chunk: Chunk) -> str:
+    if chunk.chunk_type in {"transcript", "transcript_segment"}:
+        return "transcript"
+    if chunk.chunk_type == "visual":
+        return "visual"
+    if chunk.chunk_type == "metadata":
+        return "metadata_only"
+    if chunk.chunk_type in {"document", "rag_text"}:
+        return "document"
+    return chunk.chunk_type
 
 
 def check_tool_contract(
@@ -751,6 +833,9 @@ def check_tool_contract(
             failures.append(f"missing required text {required_text!r}")
     if contract.get("requiresRankSignals") and "rankSignals" not in json.dumps(payload):
         failures.append("missing rank signals in tool payload")
+    required_depth = contract.get("requiresContentDepth")
+    if required_depth and required_depth not in json.dumps(payload):
+        failures.append(f"missing content depth {required_depth}")
     return failures
 
 

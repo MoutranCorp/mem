@@ -3019,6 +3019,11 @@ private fun RagIndexHealthPanel(
                 MetadataTiny("${health.visualChunkCount} visual")
                 MetadataTiny("${health.timestampedChunkCount} timestamped")
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.xs)) {
+                MetadataTiny("${health.transcriptReadySourceCount} transcript-ready")
+                MetadataTiny("${health.visuallyIndexedSourceCount} visual-ready")
+                MetadataTiny("${health.metadataOnlySourceCount} metadata-only")
+            }
             IndexHealthRow("FTS rows", health.chunkSearchRowCount.toString())
             IndexHealthRow("Caption tracks", health.captionTrackCount.toString())
             IndexHealthRow("Visual observations", health.visualObservationCount.toString())

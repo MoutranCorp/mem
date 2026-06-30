@@ -159,6 +159,9 @@ Immediate next steps:
    instead of implicit. The local semantic fallback now uses an explicit 10k
    embedding scan window and reports provider/model/index/scanned/window
    diagnostics in rank signals and index health.
+   Source snapshots and citations now expose `contentDepth` and a derived
+   content profile, so agents can distinguish transcript-ready, visual,
+   metadata-only, auth-required, and unindexed memories before answering.
 6. Add the first agent search tool with cited results and action previews.
    Started with a local agent search panel that summarizes grounded citations
    and can draft a collection from the cited source set. Collection drafts now

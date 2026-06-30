@@ -195,6 +195,7 @@
       "minCounts": { "segments": 1, "captionTracks": 1 },
       "requiredChunkType": "transcript",
       "requiresTimestamp": true,
+      "requiresContentDepth": "transcript",
       "requiresText": "distribution matters"
     },
     {
@@ -205,6 +206,7 @@
       "minCounts": { "chunks": 1, "observations": 1 },
       "requiredChunkType": "visual",
       "requiresTimestamp": true,
+      "requiresContentDepth": "transcript_visual",
       "requiresText": "without detected-event claims"
     },
     {
@@ -213,6 +215,7 @@
       "query": "type:video has:transcript distribution",
       "sourceId": "yt_founder_distribution",
       "requiresRankSignals": true,
+      "requiresContentDepth": "transcript",
       "requiresText": "yt_founder_distribution"
     }
   ],
