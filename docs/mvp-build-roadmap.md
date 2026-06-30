@@ -226,8 +226,11 @@ downloader product.
 
 Status: started. Imported local videos are copied into app-private storage,
 stored as durable `playback` assets, rendered inline in the feed/source detail,
-and opened in a fullscreen Media3 player. This provides the playback test
-harness before yt-dlp download/save behavior is added.
+and opened in a fullscreen Media3 player. Imports generate local thumbnails,
+feed autoplay is limited to one visible video at a time, inline controls stay
+hidden until tap, and playback seek-back/seek-forward seconds are configurable
+in settings. This provides the playback test harness before yt-dlp
+download/save behavior is added.
 
 Deliverables:
 

@@ -283,6 +283,7 @@ class MemoryRepository(private val database: MemDatabase) {
         stableInput: String,
         fileName: String,
         filePath: String,
+        thumbnailPath: String?,
         mimeType: String?,
         durationMs: Long?,
     ): String {
@@ -335,6 +336,23 @@ class MemoryRepository(private val database: MemDatabase) {
                 createdAt = now,
             ),
         )
+        thumbnailPath?.takeIf { it.isNotBlank() }?.let { path ->
+            database.assetDao().upsert(
+                AssetEntity(
+                    id = stableId("asset:${source.id}:thumbnail"),
+                    sourceId = source.id,
+                    assetType = "image",
+                    role = "thumbnail",
+                    remoteUrl = null,
+                    localPath = path,
+                    mimeType = "image/jpeg",
+                    width = null,
+                    height = null,
+                    durationMs = null,
+                    createdAt = now,
+                ),
+            )
+        }
         ensureTags(source.id, listOf("video", "local", "playable", "done"))
         indexSource(source, source.summary)
         return source.id

@@ -56,6 +56,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
@@ -116,7 +117,9 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -149,6 +152,7 @@ import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.moutrancorp.memspike.data.AssetEntity
@@ -279,6 +283,8 @@ private data class AppearanceSettings(
     val cornerStyle: CornerStyle = CornerStyle.Standard,
     val dockStyle: DockStyle = DockStyle.Glass,
     val libraryMode: LibraryMode = LibraryMode.Feed,
+    val seekBackSeconds: Int = 10,
+    val seekForwardSeconds: Int = 30,
 )
 
 private class AppearanceStore(context: Context) {
@@ -292,6 +298,8 @@ private class AppearanceStore(context: Context) {
             cornerStyle = prefs.enum("cornerStyle", CornerStyle.Standard),
             dockStyle = prefs.enum("dockStyle", DockStyle.Glass),
             libraryMode = prefs.enum("libraryMode", LibraryMode.Feed),
+            seekBackSeconds = prefs.getInt("seekBackSeconds", 10).coerceIn(5, 120),
+            seekForwardSeconds = prefs.getInt("seekForwardSeconds", 30).coerceIn(5, 120),
         )
     }
 
@@ -303,6 +311,8 @@ private class AppearanceStore(context: Context) {
             .putString("cornerStyle", settings.cornerStyle.name)
             .putString("dockStyle", settings.dockStyle.name)
             .putString("libraryMode", settings.libraryMode.name)
+            .putInt("seekBackSeconds", settings.seekBackSeconds.coerceIn(5, 120))
+            .putInt("seekForwardSeconds", settings.seekForwardSeconds.coerceIn(5, 120))
             .apply()
     }
 
@@ -449,9 +459,11 @@ private class MemAppState(
                     stableInput = importedVideo.stableInput,
                     fileName = importedVideo.fileName,
                     filePath = importedVideo.file.absolutePath,
+                    thumbnailPath = importedVideo.thumbnailFile?.absolutePath,
                     mimeType = importedVideo.mimeType,
                     durationMs = importedVideo.durationMs,
                 )
+                captureText = ""
                 isExtracting = false
                 logOutput = "Imported playable video into Mem.\n\n${importedVideo.fileName}\n$sourceId"
                 return@launch
@@ -473,6 +485,7 @@ private class MemAppState(
                     jobId = queued.jobId,
                     result = result,
                 )
+                captureText = ""
                 isExtracting = false
                 logOutput = result.rawMetadataJson
                 return@launch
@@ -494,6 +507,7 @@ private class MemAppState(
                     jobId = queued.jobId,
                     result = result,
                 )
+                captureText = ""
                 isExtracting = false
                 logOutput = result.rawMetadataJson
                 return@launch
@@ -514,6 +528,7 @@ private class MemAppState(
                 jobId = queued.jobId,
                 result = result,
             )
+            captureText = ""
             isExtracting = false
             logOutput = result.rawMetadataJson
         }
@@ -989,6 +1004,7 @@ private data class ImportedVideoFile(
     val file: File,
     val stableInput: String,
     val durationMs: Long?,
+    val thumbnailFile: File?,
 )
 
 private fun Context.readSharedTextFile(uri: Uri): ImportedTextFile? {
@@ -1085,11 +1101,25 @@ private fun Context.copySharedVideoFile(uri: Uri): ImportedVideoFile? {
     } else {
         temp.renameTo(target)
     }
+    var thumbnailFile: File? = null
     val durationMs = runCatching {
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(target.absolutePath)
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+            val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+            val frame = retriever.getFrameAtTime(1_000_000L, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                ?: retriever.getFrameAtTime()
+            if (frame != null) {
+                val thumbsDir = File(filesDir, "mem-imports/video-thumbnails").apply { mkdirs() }
+                val thumb = File(thumbsDir, "$hash.jpg")
+                if (!thumb.exists()) {
+                    thumb.outputStream().use { output ->
+                        frame.compress(Bitmap.CompressFormat.JPEG, 86, output)
+                    }
+                }
+                thumbnailFile = thumb
+            }
+            duration
         } finally {
             retriever.release()
         }
@@ -1100,6 +1130,7 @@ private fun Context.copySharedVideoFile(uri: Uri): ImportedVideoFile? {
         file = target,
         stableInput = stableInput,
         durationMs = durationMs,
+        thumbnailFile = thumbnailFile,
     )
 }
 
@@ -1366,7 +1397,7 @@ private fun SourceEntity.toMemoryUi(thumbnailAsset: AssetEntity?, playbackAsset:
             },
         time = savedAt.relativeTime(),
         icon = sourceIcon(normalizedType, processingState),
-        thumbnailUrl = thumbnailAsset?.remoteUrl ?: thumbnailUrl,
+        thumbnailUrl = thumbnailAsset?.localPath ?: thumbnailAsset?.remoteUrl ?: thumbnailUrl,
         durationLabel = duration?.durationLabel(),
         openUrl = originalUrl.takeUnless { sourceType == "note" || it.startsWith("mem-file://") },
         localPlaybackPath = localPlaybackPath,
@@ -1724,6 +1755,8 @@ private fun MemScaffold(state: MemAppState) {
         ) {
             SourceDetailSheet(
                 memory = memory,
+                seekBackSeconds = state.appearance.seekBackSeconds,
+                seekForwardSeconds = state.appearance.seekForwardSeconds,
                 onDismiss = state::closeSourceDetail,
                 onOpenMemory = state::openMemory,
                 onRetryExtraction = state::retryMemoryExtraction,
@@ -1746,6 +1779,8 @@ private fun MemScaffold(state: MemAppState) {
     state.playingMemory?.let { memory ->
         FullscreenPlayerScreen(
             memory = memory,
+            seekBackSeconds = state.appearance.seekBackSeconds,
+            seekForwardSeconds = state.appearance.seekForwardSeconds,
             onClose = state::closePlayer,
         )
     }
@@ -1895,6 +1930,8 @@ private fun LibraryScreen(state: MemAppState) {
         when (state.appearance.libraryMode) {
             LibraryMode.Feed -> LibraryFeed(
                 memories = state.memories,
+                seekBackSeconds = state.appearance.seekBackSeconds,
+                seekForwardSeconds = state.appearance.seekForwardSeconds,
                 onAddToPlaylist = state::addToPlaylist,
                 onTagForReview = state::tagForReview,
                 onOpenMemory = state::openMemory,
@@ -2246,6 +2283,18 @@ private fun AppearanceSheet(state: MemAppState) {
                 state.updateAppearance(state.appearance.copy(dockStyle = it))
             }
         }
+        SettingsGroup("Playback") {
+            PlaybackStepSetting(
+                label = "Back",
+                value = state.appearance.seekBackSeconds,
+                onChange = { state.updateAppearance(state.appearance.copy(seekBackSeconds = it)) },
+            )
+            PlaybackStepSetting(
+                label = "Forward",
+                value = state.appearance.seekForwardSeconds,
+                onChange = { state.updateAppearance(state.appearance.copy(seekForwardSeconds = it)) },
+            )
+        }
         SettingsGroup("Auth") {
             OutlinedButton(
                 onClick = state::clearInstagramAuth,
@@ -2261,8 +2310,40 @@ private fun AppearanceSheet(state: MemAppState) {
 }
 
 @Composable
+private fun PlaybackStepSetting(label: String, value: Int, onChange: (Int) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
+    ) {
+        Text(label, color = MemTokens.colors.textSecondary, fontSize = 13.sp, modifier = Modifier.weight(1f))
+        OutlinedButton(
+            onClick = { onChange((value - 5).coerceAtLeast(5)) },
+            shape = MemTokens.shapes.pill,
+        ) {
+            Text("-5s")
+        }
+        Text(
+            "${value}s",
+            color = MemTokens.colors.textPrimary,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.width(48.dp),
+            maxLines = 1,
+        )
+        OutlinedButton(
+            onClick = { onChange((value + 5).coerceAtMost(120)) },
+            shape = MemTokens.shapes.pill,
+        ) {
+            Text("+5s")
+        }
+    }
+}
+
+@Composable
 private fun SourceDetailSheet(
     memory: MemoryUi,
+    seekBackSeconds: Int,
+    seekForwardSeconds: Int,
     onDismiss: () -> Unit,
     onOpenMemory: (MemoryUi) -> Unit,
     onRetryExtraction: (MemoryUi) -> Unit,
@@ -2294,14 +2375,27 @@ private fun SourceDetailSheet(
             MemIconButton(Icons.Rounded.Close, "Close") { onDismiss() }
         }
 
-        SourceVisual(
-            memory = memory,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(214.dp),
-            iconSize = 58.dp,
-            onClick = { onOpenMemory(memory) },
-        )
+        if (memory.localPlaybackPath != null) {
+            LocalVideoPlayer(
+                path = memory.localPlaybackPath,
+                seekBackSeconds = seekBackSeconds,
+                seekForwardSeconds = seekForwardSeconds,
+                controlsInitiallyVisible = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(214.dp)
+                    .clip(MemTokens.shapes.lg),
+            )
+        } else {
+            SourceVisual(
+                memory = memory,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(214.dp),
+                iconSize = 58.dp,
+                onClick = { onOpenMemory(memory) },
+            )
+        }
 
         Row(horizontalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
             MetadataPill(memory.source, Icons.Rounded.Link, Modifier.weight(1f))
@@ -2328,24 +2422,6 @@ private fun SourceDetailSheet(
                 onImportCookies = { uri -> onImportCookies(memory, uri) },
                 onClearAuth = { onClearAuth(memory) },
             )
-        }
-
-        memory.localPlaybackPath?.let { path ->
-            SurfaceCard {
-                Column(
-                    modifier = Modifier.padding(MemTokens.spacing.md),
-                    verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
-                ) {
-                    Text("Playback", color = MemTokens.colors.textPrimary, fontWeight = FontWeight.SemiBold)
-                    LocalVideoPlayer(
-                        path = path,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(220.dp)
-                            .clip(MemTokens.shapes.lg),
-                    )
-                }
-            }
         }
 
         SurfaceCard {
@@ -2623,7 +2699,12 @@ private fun InstagramConnectionScreen(onClose: () -> Unit, onSave: () -> Unit) {
 }
 
 @Composable
-private fun FullscreenPlayerScreen(memory: MemoryUi, onClose: () -> Unit) {
+private fun FullscreenPlayerScreen(
+    memory: MemoryUi,
+    seekBackSeconds: Int,
+    seekForwardSeconds: Int,
+    onClose: () -> Unit,
+) {
     Surface(
         modifier = Modifier
             .fillMaxSize()
@@ -2649,6 +2730,9 @@ private fun FullscreenPlayerScreen(memory: MemoryUi, onClose: () -> Unit) {
                 LocalVideoPlayer(
                     path = path,
                     autoPlay = true,
+                    seekBackSeconds = seekBackSeconds,
+                    seekForwardSeconds = seekForwardSeconds,
+                    controlsInitiallyVisible = true,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
@@ -2659,30 +2743,54 @@ private fun FullscreenPlayerScreen(memory: MemoryUi, onClose: () -> Unit) {
 }
 
 @Composable
-private fun LocalVideoPlayer(path: String, modifier: Modifier = Modifier, autoPlay: Boolean = false) {
+@androidx.annotation.OptIn(UnstableApi::class)
+private fun LocalVideoPlayer(
+    path: String,
+    modifier: Modifier = Modifier,
+    autoPlay: Boolean = false,
+    seekBackSeconds: Int = 10,
+    seekForwardSeconds: Int = 30,
+    controlsInitiallyVisible: Boolean = false,
+) {
     val context = LocalContext.current
     val mediaItem = remember(path) { MediaItem.fromUri(Uri.fromFile(File(path))) }
-    val player = remember(path) {
-        ExoPlayer.Builder(context).build().apply {
+    var showControls by remember(path) { mutableStateOf(controlsInitiallyVisible) }
+    val player = remember(path, seekBackSeconds, seekForwardSeconds) {
+        ExoPlayer.Builder(context)
+            .setSeekBackIncrementMs(seekBackSeconds.coerceIn(5, 120) * 1000L)
+            .setSeekForwardIncrementMs(seekForwardSeconds.coerceIn(5, 120) * 1000L)
+            .build()
+            .apply {
             setMediaItem(mediaItem)
             repeatMode = Player.REPEAT_MODE_OFF
             playWhenReady = autoPlay
             prepare()
         }
     }
+    LaunchedEffect(player, autoPlay) {
+        player.playWhenReady = autoPlay
+        if (autoPlay) player.play() else player.pause()
+    }
     DisposableEffect(player) {
         onDispose { player.release() }
     }
-    AndroidView(
-        factory = { viewContext ->
-            PlayerView(viewContext).apply {
-                this.player = player
-                useController = true
-            }
-        },
-        update = { it.player = player },
-        modifier = modifier.background(Color.Black),
-    )
+    Box(modifier = modifier.background(Color.Black).clickable { showControls = true }) {
+        AndroidView(
+            factory = { viewContext ->
+                PlayerView(viewContext).apply {
+                    this.player = player
+                    useController = showControls
+                    if (!showControls) hideController()
+                }
+            },
+            update = { view ->
+                view.player = player
+                view.useController = showControls
+                if (showControls) view.showController() else view.hideController()
+            },
+            modifier = Modifier.fillMaxSize(),
+        )
+    }
 }
 
 @Composable
@@ -2967,12 +3075,24 @@ private fun LibraryCollections(collections: List<CollectionUi>) {
 @Composable
 private fun LibraryFeed(
     memories: List<MemoryUi>,
+    seekBackSeconds: Int,
+    seekForwardSeconds: Int,
     onAddToPlaylist: (MemoryUi) -> Unit,
     onTagForReview: (MemoryUi) -> Unit,
     onOpenMemory: (MemoryUi) -> Unit,
     onOpenDetail: (MemoryUi) -> Unit,
 ) {
+    val listState = rememberLazyListState()
+    val autoPlayMemoryId by remember(memories, listState) {
+        derivedStateOf {
+            listState.layoutInfo.visibleItemsInfo
+                .mapNotNull { item -> memories.getOrNull(item.index) }
+                .firstOrNull { it.localPlaybackPath != null }
+                ?.id
+        }
+    }
     LazyColumn(
+        state = listState,
         verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm),
         contentPadding = PaddingValues(bottom = 148.dp),
     ) {
@@ -2983,6 +3103,9 @@ private fun LibraryFeed(
                 onTagForReview = onTagForReview,
                 onOpenMemory = onOpenMemory,
                 onOpenDetail = onOpenDetail,
+                autoPlayInline = memory.id == autoPlayMemoryId,
+                seekBackSeconds = seekBackSeconds,
+                seekForwardSeconds = seekForwardSeconds,
             )
         }
     }
@@ -3029,6 +3152,9 @@ private fun FeedItem(
     onTagForReview: (MemoryUi) -> Unit,
     onOpenMemory: (MemoryUi) -> Unit,
     onOpenDetail: (MemoryUi) -> Unit,
+    autoPlayInline: Boolean,
+    seekBackSeconds: Int,
+    seekForwardSeconds: Int,
 ) {
     SurfaceCard {
         Column(modifier = Modifier.padding(MemTokens.spacing.md), verticalArrangement = Arrangement.spacedBy(MemTokens.spacing.sm)) {
@@ -3062,7 +3188,10 @@ private fun FeedItem(
             memory.localPlaybackPath?.let { path ->
                 LocalVideoPlayer(
                     path = path,
-                    autoPlay = false,
+                    autoPlay = autoPlayInline,
+                    seekBackSeconds = seekBackSeconds,
+                    seekForwardSeconds = seekForwardSeconds,
+                    controlsInitiallyVisible = false,
                     modifier = Modifier
                         .fillMaxWidth()
                         .aspectRatio(16f / 9f)

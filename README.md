@@ -53,6 +53,9 @@ model used by `mobile-agent`.
 - Videos can be imported from the file picker or share sheet, copied into
   app-private storage, saved as durable local playback assets, played inline in
   the feed, and opened in a fullscreen in-app player.
+- Video imports generate a local thumbnail, feed autoplay is limited to one
+  visible video at a time, controls stay hidden until the video is tapped, and
+  playback seek-back/seek-forward seconds are configurable in settings.
 - Auth-gated links are saved as first-class `needs_auth` sources with a clear
   detail callout and retry-public-extraction action.
 - `needs_auth` source detail can import a domain-scoped `cookies.txt` file,
@@ -112,8 +115,8 @@ The production direction is documented in:
 
 Immediate next steps:
 
-1. Add local thumbnail generation/caching for imported and downloaded videos.
-2. Expand source detail into full video/article/document layouts.
+1. Add local thumbnail generation/caching for downloaded videos.
+2. Expand source detail into full article/document layouts.
 3. Build collection detail screens and richer tag editing.
 4. Expand FTS indexing to transcript/caption chunks and richer ranking.
 5. Harden Instagram auth with session validation, expiry messaging, and
