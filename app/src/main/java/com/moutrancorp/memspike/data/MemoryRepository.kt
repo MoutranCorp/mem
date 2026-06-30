@@ -64,24 +64,25 @@ class MemoryRepository(private val database: MemDatabase) {
     }
 
     private suspend fun searchMemory(rawQuery: String): List<SearchResultData> {
+        val parsed = parseSearchQuery(rawQuery)
         val ftsQuery = toFtsQuery(rawQuery)
         val ftsResults = if (ftsQuery.isBlank()) {
             emptyList()
         } else {
-            database.chunkSearchDao().searchResults(ftsQuery, 60).mapIndexed { index, result ->
+            database.chunkSearchDao().searchResults(ftsQuery, 120).mapIndexed { index, result ->
                 result.toSearchResultData(
                     retrievalMode = "keyword",
                     rankScore = 1.0f / (index + 1),
                 )
             }
         }
-        val semanticResults = semanticSearch(rawQuery, 60)
-        val fused = fuseSearchResults(ftsResults, semanticResults).take(40)
+        val semanticResults = semanticSearch(rawQuery, 120)
+        val fused = fuseSearchResults(ftsResults, semanticResults, parsed).take(40)
         database.searchQueryDao().insert(
             SearchQueryEntity(
                 id = UUID.randomUUID().toString(),
                 query = rawQuery,
-                parsedFiltersJson = parsedSearchJson(rawQuery),
+                parsedFiltersJson = parsed.toJson(),
                 resultCount = fused.size,
                 createdAt = System.currentTimeMillis(),
             ),
@@ -102,20 +103,28 @@ class MemoryRepository(private val database: MemDatabase) {
             .take(limit)
     }
 
-    private fun fuseSearchResults(keyword: List<SearchResultData>, semantic: List<SearchResultData>): List<SearchResultData> {
+    private fun fuseSearchResults(keyword: List<SearchResultData>, semantic: List<SearchResultData>, parsed: ParsedSearchQuery): List<SearchResultData> {
         val byChunk = linkedMapOf<String, SearchResultData>()
-        (keyword + semantic).forEachIndexed { index, result ->
+        (keyword + semantic)
+            .filter { parsed.matches(it) }
+            .forEachIndexed { index, result ->
             val existing = byChunk[result.chunkId]
             val sourceDedupePenalty = byChunk.values.count { it.sourceId == result.sourceId } * 0.03f
             val recencyBoost = 1.0f / (1 + index)
-            val score = result.rankScore + recencyBoost - sourceDedupePenalty
+            val filterBoost = parsed.rankBoost(result)
+            val score = result.rankScore + recencyBoost + filterBoost - sourceDedupePenalty
+            val ranked = result.copy(
+                rankScore = score,
+                rankSignals = "mode=${result.retrievalMode}; base=${"%.2f".format(result.rankScore)}; recency=${"%.2f".format(recencyBoost)}; filters=${"%.2f".format(filterBoost)}",
+            )
             if (existing == null || score > existing.rankScore) {
-                byChunk[result.chunkId] = result.copy(rankScore = score)
+                byChunk[result.chunkId] = ranked
             } else if (existing.retrievalMode != result.retrievalMode) {
                 byChunk[result.chunkId] = existing.copy(
                     retrievalMode = "hybrid",
                     matchReason = existing.matchReason.replace("Keyword", "Hybrid").replace("Semantic", "Hybrid"),
                     rankScore = existing.rankScore + 0.25f,
+                    rankSignals = existing.rankSignals + "; hybrid=true",
                 )
             }
         }
@@ -872,6 +881,7 @@ data class SearchResultData(
     val savedAt: Long,
     val retrievalMode: String,
     val rankScore: Float,
+    val rankSignals: String,
 )
 
 data class ContentChunkData(
@@ -962,6 +972,7 @@ private fun ChunkSearchResult.toSearchResultData(retrievalMode: String, rankScor
         savedAt = savedAt,
         retrievalMode = retrievalMode,
         rankScore = rankScore,
+        rankSignals = retrievalMode,
     )
 }
 
@@ -988,6 +999,7 @@ private fun ChunkEmbeddingCandidate.toSearchResultData(score: Float): SearchResu
         savedAt = savedAt,
         retrievalMode = "semantic",
         rankScore = score,
+        rankSignals = "semantic:${"%.2f".format(score)}",
     )
 }
 
@@ -1111,7 +1123,7 @@ private fun Long.timestampLabel(): String {
 
 private fun toFtsQuery(query: String): String {
     val parsed = parseSearchQuery(query)
-    return (parsed.phrases + parsed.freeTerms + parsed.filterTerms)
+    return (parsed.phrases + parsed.freeTerms + parsed.softTerms)
         .map { token -> token.filter { it.isLetterOrDigit() || it == '_' || it == '-' } }
         .filter { it.length >= 2 }
         .distinct()
@@ -1139,24 +1151,67 @@ private fun JSONArray?.orEmptyStrings(): List<String> {
     }
 }
 
-private fun parsedSearchJson(query: String): String {
-    val parsed = parseSearchQuery(query)
-    return JSONObject()
-        .put("phrases", JSONArray(parsed.phrases))
-        .put("freeTerms", JSONArray(parsed.freeTerms))
-        .put("filterTerms", JSONArray(parsed.filterTerms))
-        .toString()
-}
-
 private data class ParsedSearchQuery(
     val phrases: List<String>,
     val freeTerms: List<String>,
-    val filterTerms: List<String>,
-)
+    val softTerms: List<String>,
+    val negativeTerms: List<String>,
+    val types: Set<String>,
+    val domains: Set<String>,
+    val statuses: Set<String>,
+    val requiredChunkTypes: Set<String>,
+    val requiredCapabilities: Set<String>,
+) {
+    fun matches(result: SearchResultData): Boolean {
+        val haystack = result.searchHaystack()
+        if (negativeTerms.any { haystack.contains(it.lowercase(Locale.US)) }) return false
+        if (types.isNotEmpty() && result.sourceType.lowercase(Locale.US) !in types) return false
+        if (domains.isNotEmpty()) {
+            val domain = result.originDomain?.lowercase(Locale.US)?.removePrefix("www.")
+            if (domain == null || domains.none { domain == it || domain.endsWith(".$it") }) return false
+        }
+        if (statuses.isNotEmpty() && statuses.none { haystack.contains(it) }) return false
+        if (requiredChunkTypes.isNotEmpty() && result.chunkType.lowercase(Locale.US) !in requiredChunkTypes) return false
+        if ("timestamp" in requiredCapabilities && result.startTimeMs == null) return false
+        return true
+    }
+
+    fun rankBoost(result: SearchResultData): Float {
+        val haystack = result.searchHaystack()
+        var boost = 0f
+        phrases.forEach { phrase -> if (haystack.contains(phrase.lowercase(Locale.US))) boost += 0.45f }
+        freeTerms.forEach { term -> if (haystack.contains(term.lowercase(Locale.US))) boost += 0.12f }
+        if (requiredChunkTypes.contains(result.chunkType.lowercase(Locale.US))) boost += 0.35f
+        if (domains.any { result.originDomain?.lowercase(Locale.US)?.contains(it) == true }) boost += 0.25f
+        if (result.startTimeMs != null) boost += 0.08f
+        if (result.retrievalMode == "hybrid") boost += 0.25f
+        return boost
+    }
+
+    fun toJson(): String {
+        return JSONObject()
+            .put("phrases", JSONArray(phrases))
+            .put("freeTerms", JSONArray(freeTerms))
+            .put("softTerms", JSONArray(softTerms))
+            .put("negativeTerms", JSONArray(negativeTerms))
+            .put("types", JSONArray(types.toList()))
+            .put("domains", JSONArray(domains.toList()))
+            .put("statuses", JSONArray(statuses.toList()))
+            .put("requiredChunkTypes", JSONArray(requiredChunkTypes.toList()))
+            .put("requiredCapabilities", JSONArray(requiredCapabilities.toList()))
+            .toString()
+    }
+}
 
 private fun parseSearchQuery(query: String): ParsedSearchQuery {
     val freeTerms = mutableListOf<String>()
-    val filterTerms = mutableListOf<String>()
+    val softTerms = mutableListOf<String>()
+    val negativeTerms = mutableListOf<String>()
+    val types = mutableSetOf<String>()
+    val domains = mutableSetOf<String>()
+    val statuses = mutableSetOf<String>()
+    val requiredChunkTypes = mutableSetOf<String>()
+    val requiredCapabilities = mutableSetOf<String>()
     val phrases = Regex("\"([^\"]+)\"")
         .findAll(query)
         .mapNotNull { it.groupValues.getOrNull(1)?.trim()?.takeIf(String::isNotBlank) }
@@ -1168,23 +1223,27 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
         .filter { it.isNotBlank() }
         .forEach { raw ->
             val token = raw.trim().trim('"')
-            if (token.startsWith("-")) return@forEach
+            if (token.startsWith("-")) {
+                token.drop(1).takeIf { it.length >= 2 }?.let { negativeTerms.add(it.lowercase(Locale.US)) }
+                return@forEach
+            }
             val parts = token.split(":", limit = 2)
             if (parts.size == 2) {
                 val key = parts[0].lowercase(Locale.US)
                 val value = parts[1].lowercase(Locale.US).trim()
                 when (key) {
-                    "type" -> filterTerms.add(value)
-                    "site", "domain" -> filterTerms.add(value.removePrefix("www."))
-                    "status" -> filterTerms.add(value)
+                    "type" -> types.addAll(value.split("/", ",").map { normalizeTypeFilter(it) })
+                    "site", "domain" -> domains.add(value.removePrefix("www."))
+                    "status" -> statuses.add(value.replace("-", "_"))
                     "has" -> when (value) {
-                        "transcript" -> filterTerms.add("transcript")
-                        "visual" -> filterTerms.add("visual")
-                        "local_video" -> filterTerms.add("playable")
-                        "auth" -> filterTerms.add("needs")
-                        else -> filterTerms.add(value)
+                        "transcript" -> requiredChunkTypes.add("transcript")
+                        "visual" -> requiredChunkTypes.add("visual")
+                        "local_video" -> softTerms.add("playable")
+                        "timestamp" -> requiredCapabilities.add("timestamp")
+                        "auth" -> statuses.add("needs_auth")
+                        else -> softTerms.add(value)
                     }
-                    "tag", "collection", "author", "channel", "language" -> filterTerms.add(value)
+                    "tag", "collection", "author", "channel", "language", "action" -> softTerms.add(value)
                     "duration", "saved", "date" -> Unit
                     else -> freeTerms.add(value)
                 }
@@ -1192,5 +1251,41 @@ private fun parseSearchQuery(query: String): ParsedSearchQuery {
                 freeTerms.add(token)
             }
         }
-    return ParsedSearchQuery(phrases, freeTerms, filterTerms)
+    return ParsedSearchQuery(
+        phrases = phrases,
+        freeTerms = freeTerms.map { it.lowercase(Locale.US) },
+        softTerms = softTerms.map { it.lowercase(Locale.US) },
+        negativeTerms = negativeTerms,
+        types = types.filter { it.isNotBlank() }.toSet(),
+        domains = domains.filter { it.isNotBlank() }.toSet(),
+        statuses = statuses.filter { it.isNotBlank() }.toSet(),
+        requiredChunkTypes = requiredChunkTypes,
+        requiredCapabilities = requiredCapabilities,
+    )
+}
+
+private fun normalizeTypeFilter(value: String): String {
+    return when (value.trim().lowercase(Locale.US)) {
+        "pdf" -> "pdf"
+        "doc", "docs", "document" -> "document"
+        "videos" -> "video"
+        "articles" -> "article"
+        "notes" -> "note"
+        "images" -> "image"
+        "audio" -> "audio"
+        else -> value.trim().lowercase(Locale.US)
+    }
+}
+
+private fun SearchResultData.searchHaystack(): String {
+    return listOfNotNull(
+        title,
+        sourceType,
+        originDomain,
+        author,
+        snippet,
+        chunkType,
+        matchReason,
+        retrievalMode,
+    ).joinToString(" ").lowercase(Locale.US)
 }

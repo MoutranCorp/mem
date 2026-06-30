@@ -137,7 +137,9 @@ Immediate next steps:
    field.
    Started with simple `type:`, `site:`, `domain:`, `status:`, and `has:`
    filter tokens routed into FTS tags, quoted phrase handling, and match
-   reason cards.
+   reason cards. Search now applies structured hard filters for type, domain,
+   status, transcript/visual/timestamp capabilities, negative terms, and shows
+   rank signals on cited result cards.
 5. Add an embedding/index interface so every extracted record can become a RAG
    document with stable IDs, source URL, timestamp, title, tags, and transcript
    segments.

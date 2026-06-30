@@ -62,8 +62,11 @@ Queries:
 Expected:
 
 - Filters contribute to retrieval tokens and result explanations.
-- Nonmatching source types/domains should fall down the ranking.
+- Nonmatching source types/domains/status/capabilities should be removed from
+  the cited result set when a hard filter is present.
 - Quoted phrases remain searchable as meaningful terms.
+- Cited result cards expose rank signals for debugging keyword, semantic,
+  recency, filter, and hybrid behavior.
 
 ### Visual Memory Placeholder
 

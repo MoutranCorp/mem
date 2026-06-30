@@ -1754,6 +1754,7 @@ private data class SearchResultUi(
     val startTimeLabel: String?,
     val retrievalMode: String,
     val rankLabel: String,
+    val rankSignals: String,
 )
 
 private data class ContentChunkUi(
@@ -1778,6 +1779,7 @@ private fun SearchResultData.toSearchResultUi(): SearchResultUi {
         startTimeLabel = startTimeMs?.timestampLabel(),
         retrievalMode = retrievalMode,
         rankLabel = "%.2f".format(rankScore),
+        rankSignals = rankSignals,
     )
 }
 
@@ -2481,6 +2483,13 @@ private fun SearchResultCard(result: SearchResultUi, onClick: () -> Unit) {
                 MetadataTiny(result.chunkType)
                 MetadataTiny(result.retrievalMode)
             }
+            Text(
+                text = result.rankSignals,
+                color = MemTokens.colors.textTertiary,
+                fontSize = 10.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }
